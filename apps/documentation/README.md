@@ -1,5 +1,7 @@
 # PramanAuth SDK Developer Documentation
 
+**Status:** 🧪 Beta | **Network:** Polygon Amoy (Testnet)
+
 Welcome to the PramanAuth SDK documentation. PramanAuth is a decentralized Identity-as-a-Service (IaaS) offering privacy-preserving, zero-knowledge (ZK) biometric authentication.
 
 ---
