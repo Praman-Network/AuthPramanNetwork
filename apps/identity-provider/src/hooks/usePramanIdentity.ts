@@ -2,18 +2,18 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const faceapi = (window as any).faceapi;
 import { ethers } from 'ethers';
 import {
-  encryptPII,
-  uploadToIPFS,
-  getManualAuthSig,
+  initPraman,
   decryptPII,
-  generateZKFaceProof,
-  quantizeFaceVector,
-  hashFaceVector,
-  FaceRegistryConfig as faceRegistryConfig,
+  getManualAuthSig,
   fetchFromIPFS
 } from '@praman/sdk';
 
-// SHA-256 helper removed in favor of Keccak256 biometrics hashing
+// Initialize the PramanAuth SDK with Backend Relayer URL
+const praman = initPraman({
+  apiKey: "pm_dev_identity_provider",
+  network: "polygon-amoy",
+  backendUrl: "http://localhost:4000", // Centralized Relayer Backend API
+});
 
 export type ProgressStep =
   | 'idle'
@@ -65,11 +65,22 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     }
   }, []);
 
-  // Connects the wallet using standard Ethers.js
+  // Sync wallet address from SDK (loads local ephemeral wallet on mount)
+  useEffect(() => {
+    try {
+      const activeWallet = (praman as any).getLocalEphemeralWallet();
+      setWalletAddress(activeWallet.address);
+      addLog(`Loaded local ephemeral gasless wallet: ${activeWallet.address}`);
+    } catch (e) {
+      console.warn("Failed to load local ephemeral wallet:", e);
+    }
+  }, [addLog]);
+
+  // Connects the wallet using standard Ethers.js (if MetaMask is preferred)
   const connectWallet = useCallback(async () => {
     setError(null);
     setProgressStep('connecting-wallet');
-    addLog('Requesting wallet connection...');
+    addLog('Requesting MetaMask wallet connection...');
 
     if (!(window as any).ethereum) {
       const err = 'No Web3 wallet found. Please install MetaMask or another browser wallet.';
@@ -91,7 +102,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
       
       setWalletAddress(address);
       setProgressStep('idle');
-      addLog(`Wallet connected: ${address}`);
+      addLog(`MetaMask connected: ${address}`);
       return signer;
     } catch (err: any) {
       const errMsg = err.message || 'Failed to connect wallet';
@@ -113,7 +124,6 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     const cdnModelUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
 
     try {
-      // Attempt to load from public/models/ locally
       await faceapi.nets.ssdMobilenetv1.loadFromUri(localModelUrl);
       await faceapi.nets.faceLandmark68Net.loadFromUri(localModelUrl);
       await faceapi.nets.faceRecognitionNet.loadFromUri(localModelUrl);
@@ -140,7 +150,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     }
   }, [isModelLoaded, addLog]);
 
-  // Registration Mode: Scans face, encrypts PII, uploads to IPFS, and registers on contract
+  // Registration Mode: Delegates tasks completely to Praman SDK
   const scanAndRegister = useCallback(async (
     piiData: { name: string; email: string; mobile: string },
     webcamScreenshot: string | null
@@ -158,7 +168,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     }
 
     if (!webcamScreenshot) {
-      const err = 'Failed to capture frame from Webcam. Make sure your camera is active.';
+      const err = 'Failed to capture frame from Webcam.';
       setError(err);
       setIsProcessing(false);
       setProgressStep('error');
@@ -167,141 +177,51 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     }
 
     let signer: any = null;
-    let currentAddress = walletAddress;
-
-    // Connect wallet if not already connected
-    if (!currentAddress) {
-      signer = await connectWallet();
-      if (!signer) {
-        setIsProcessing(false);
-        return null;
-      }
-      currentAddress = await signer.getAddress();
-    } else {
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      signer = await provider.getSigner();
+    // Check if standard browser wallet is connected, else fallback to ephemeral wallet in SDK
+    if (walletAddress && (window as any).ethereum) {
+      try {
+        const provider = new ethers.BrowserProvider((window as any).ethereum);
+        signer = await provider.getSigner();
+      } catch (e) {}
     }
 
     try {
-      // 1. Process Frame (Face Landmark & Vector Generation)
-      setProgressStep('scanning-face');
-      addLog('Analyzing facial structure and liveness...');
-      
-      const img = new Image();
-      img.src = webcamScreenshot;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error('Failed to parse webcam image screenshot'));
-      });
-
-      setProgressStep('generating-vector');
-      addLog('Extracting 128-dimensional face embedding...');
-      
-      const detection = await faceapi
-        .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-
-      if (!detection) {
-        throw new Error('No face detected. Please ensure your face is clearly visible, well-lit, and centered.');
-      }
-
-      const faceVector = Array.from(detection.descriptor) as number[];
-      addLog(`Face detected successfully. Bounding box: x=${Math.round(detection.detection.box.x)}, y=${Math.round(detection.detection.box.y)}`);
-      
-      const quantizedNewVector = quantizeFaceVector(faceVector);
-      const faceDescriptorHash = hashFaceVector(quantizedNewVector);
-      addLog(`Biometric vector quantized. Keccak256 hash: ${faceDescriptorHash}`);
-
-      // 1.5 Duplicate Check against Smart Contract (Registration guard)
-      setProgressStep('checking-duplicate');
-      addLog('Connecting to FaceRegistry Smart Contract to verify face is not already registered...');
-      
-      const faceRegistryAddress = faceRegistryConfig.address;
-      const faceRegistryAbi = faceRegistryConfig.abi;
-      
-      const contract = new ethers.Contract(faceRegistryAddress, faceRegistryAbi, signer);
-      
-      // Check 1: Is this exact face hash already on-chain?
-      const isFaceReg: boolean = Boolean(await contract.isFaceRegistered(faceDescriptorHash));
-      
-      // Check 2: Has this wallet address already registered a face?
-      const walletHash: string = await contract.getUserFaceHash(currentAddress);
-      const isWalletReg: boolean = (walletHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' && walletHash !== '0x');
-      
-      const isAlreadyRegistered = isFaceReg || isWalletReg;
-      addLog(`On-chain check — face registered: ${isFaceReg}, wallet registered: ${isWalletReg}`);
-      
-      // GUARD: Block registration if already exists
-      if (isAlreadyRegistered === true) {
-        throw new Error('Identity already exists. Sybil attack prevented. Please Login.');
-      }
-      addLog('✓ No duplicate found. Proceeding with PII encryption and IPFS upload.');
-
-      // 2. Encryption (Strict Lit Protocol)
-      setProgressStep('encrypting-pii');
-      
-      addLog('Requesting Lit authorization signature (SIWE)...');
-      const authSig = await getManualAuthSig(signer);
-      addLog('Auth signature captured. Connecting to Lit nodes...');
-
-      addLog('Encrypting user PII client-side...');
-      const { ciphertext, dataToEncryptHash } = await encryptPII(
+      addLog('Starting gasless registration flow via Relayer...');
+      const result = await praman.register(
+        webcamScreenshot,
         piiData,
-        currentAddress!,
-        adminAddress,
-        authSig
+        signer,
+        faceapi,
+        (progress) => {
+          setProgressStep(progress.step as ProgressStep);
+          addLog(progress.message);
+        }
       );
-      addLog('PII encrypted using Lit Protocol on datil-dev network.');
 
-      // 3. Decentralized Storage (IPFS Upload via Pinata)
-      setProgressStep('uploading-ipfs');
-      addLog('Uploading encrypted payload to IPFS...');
-      
-      const ipfsPayload = {
-        ciphertext,
-        dataToEncryptHash,
-        faceDescriptorHash,
-        quantizedVector: quantizedNewVector,
-        userAddress: currentAddress!,
-      };
+      if (!result.success) {
+        throw new Error(result.error);
+      }
 
-      const ipfsResult = await uploadToIPFS(ipfsPayload);
-      setIpfsCid(ipfsResult.cid);
-      addLog(`Payload pinned to Pinata IPFS node. CID: ${ipfsResult.cid}`);
-
-      // 4. On-Chain Registry Registration (No ZK proofs during Registration!)
-      setProgressStep('registering-on-chain');
-      addLog('Registering face hash and IPFS CID on-chain...');
-      addLog('Sending registerFace transaction to registry contract...');
-      const tx = await contract.registerFace(faceDescriptorHash, ipfsResult.cid, {
-        maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei'),
-        maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-        gasLimit: 300000
-      });
-      addLog(`Transaction sent: ${tx.hash}. Waiting for block confirmation...`);
-      await tx.wait();
-      addLog('Transaction confirmed! Face registered on-chain successfully.');
-
+      setIpfsCid(result.ipfsCid || null);
       setProgressStep('success');
       setIsProcessing(false);
-      addLog('Identity Module registration completed successfully.');
-      
+      addLog('Gasless registration completed successfully!');
+
       return {
-        ipfsCid: ipfsResult.cid,
-        faceDescriptorHash,
+        ipfsCid: result.ipfsCid,
+        faceDescriptorHash: result.faceDescriptorHash,
       };
     } catch (err: any) {
       const errMsg = err.message || 'Registration flow failed';
       setError(errMsg);
       setProgressStep('error');
       setIsProcessing(false);
-      addLog(`Flow execution error: ${errMsg}`);
+      addLog(`Registration execution error: ${errMsg}`);
       return null;
     }
-  }, [isModelLoaded, walletAddress, adminAddress, connectWallet, addLog]);
+  }, [isModelLoaded, walletAddress, addLog]);
 
-  // Login Mode: Scans face, queries contract to fetch registered vector, runs ZK prover in browser to match
+  // Login Mode: Delegates task completely to Praman SDK
   const verifyAndLogin = useCallback(async (
     webcamScreenshot: string | null
   ) => {
@@ -318,7 +238,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     }
 
     if (!webcamScreenshot) {
-      const err = 'Failed to capture frame from Webcam. Make sure your camera is active.';
+      const err = 'Failed to capture frame from Webcam.';
       setError(err);
       setIsProcessing(false);
       setProgressStep('error');
@@ -327,124 +247,60 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     }
 
     let signer: any = null;
-    let currentAddress = walletAddress;
-
-    // Connect wallet if not already connected
-    if (!currentAddress) {
-      signer = await connectWallet();
-      if (!signer) {
-        setIsProcessing(false);
-        return null;
-      }
-      currentAddress = await signer.getAddress();
-    } else {
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      signer = await provider.getSigner();
+    if (walletAddress && (window as any).ethereum) {
+      try {
+        const provider = new ethers.BrowserProvider((window as any).ethereum);
+        signer = await provider.getSigner();
+      } catch (e) {}
     }
 
     try {
-      // 1. Process Frame (Face Landmark & Vector Generation)
-      setProgressStep('scanning-face');
-      addLog('Analyzing facial structure for verification...');
-      
-      const img = new Image();
-      img.src = webcamScreenshot;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error('Failed to parse webcam image screenshot'));
-      });
+      addLog('Starting verification and ZK proof validation...');
+      const result = await praman.login(
+        webcamScreenshot,
+        signer,
+        faceapi,
+        (progress) => {
+          setProgressStep(progress.step as ProgressStep);
+          addLog(progress.message);
+        }
+      );
 
-      setProgressStep('generating-vector');
-      addLog('Extracting 128-dimensional face embedding...');
-      
-      const detection = await faceapi
-        .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-
-      if (!detection) {
-        throw new Error('No face detected. Please ensure your face is clearly visible, well-lit, and centered.');
+      if (!result.success) {
+        throw new Error(result.error);
       }
 
-      const faceVector = Array.from(detection.descriptor) as number[];
-      addLog('Face detected successfully.');
-      
-      const quantizedNewVector = quantizeFaceVector(faceVector);
-      const faceDescriptorHash = hashFaceVector(quantizedNewVector);
-      addLog(`Biometric vector quantized. Keccak256 hash: ${faceDescriptorHash}`);
-
-      // 2. Wallet-based registration lookup (Login guard)
-      // 2. Query FaceRegistry Contract
-      setProgressStep('checking-duplicate');
-      addLog('Querying FaceRegistry contract — checking wallet address for registration...');
-      
-      const faceRegistryAddress = faceRegistryConfig.address;
-      const faceRegistryAbi = faceRegistryConfig.abi;
-      
-      const contract = new ethers.Contract(faceRegistryAddress, faceRegistryAbi, signer);
-      
-      // Look up by WALLET ADDRESS — this is the stable identifier across logins
-      const storedFaceHash: string = await contract.getUserFaceHash(currentAddress);
-      const zeroHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
-      const isRegistered = (storedFaceHash !== zeroHash && storedFaceHash !== '0x');
-      
-      if (isRegistered === false) {
-        throw new Error('User not found. Please Register first.');
-      }
-      
-      const registeredCid = await contract.getUserCid(currentAddress);
-      const registeredHash = storedFaceHash;
-      
-      addLog(`✓ Wallet is registered. IPFS CID: ${registeredCid}`);
-
-      // 3. Load saved quantized face vector for ZK comparison
-      addLog('Loading saved biometric template from IPFS...');
-
-      const payload = await fetchFromIPFS(registeredCid);
-      const savedVector = payload.quantizedVector;
-
-      if (!savedVector || savedVector.length !== 128) {
-        throw new Error(
-          'Registered biometric template not found in IPFS payload.'
-        );
-      }
-      addLog('✓ Retrieved 128-d registered face descriptor template.');
-
-      // 4. Run ZK fullProve in browser to verify face match
-      setProgressStep('generating-zk-proof');
-      addLog('Loading verification key and running snarkjs.groth16.fullProve...');
-      
-      const zkResult = await generateZKFaceProof(quantizedNewVector, savedVector, registeredHash);
-      setZkProof(zkResult.proof);
-      setIpfsCid(registeredCid);
-      
-      addLog('Real Groth16 ZK match proof generated and verified successfully in the browser!');
-
+      setZkProof(result.proof);
+      setIpfsCid(result.ipfsCid || null);
       setProgressStep('success');
       setIsProcessing(false);
-      addLog('Biometric Login verified successfully.');
-      
+      addLog(`Verification complete! Session token: ${result.jwt.slice(0, 15)}...`);
+
       return {
-        ipfsCid: registeredCid,
-        zkProof: zkResult.proof,
-        faceDescriptorHash,
+        ipfsCid: result.ipfsCid,
+        zkProof: result.proof,
+        faceDescriptorHash: result.faceDescriptorHash,
       };
     } catch (err: any) {
       const errMsg = err.message || 'Login flow failed';
       setError(errMsg);
       setProgressStep('error');
       setIsProcessing(false);
-      addLog(`Flow execution error: ${errMsg}`);
+      addLog(`Verification execution error: ${errMsg}`);
       return null;
     }
-  }, [isModelLoaded, walletAddress, connectWallet, addLog]);
+  }, [isModelLoaded, walletAddress, addLog]);
 
   // Utility to decrypt and retrieve user PII (for self-verification)
   const testDecryption = useCallback(async (
     ipfsCid: string
   ) => {
-    if (!walletAddress) {
-      await connectWallet();
+    let activeSigner: any = null;
+    if (walletAddress && (window as any).ethereum) {
+      const provider = new ethers.BrowserProvider((window as any).ethereum);
+      activeSigner = await provider.getSigner();
+    } else {
+      activeSigner = (praman as any).getLocalEphemeralWallet();
     }
     
     addLog('Fetching encrypted payload from IPFS...');
@@ -452,15 +308,12 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
 
     addLog('Starting test decryption flow...');
     try {
-      const provider = new ethers.BrowserProvider((window as any).ethereum);
-      const signer = await provider.getSigner();
-      
-      const authSig = await getManualAuthSig(signer);
+      const authSig = await getManualAuthSig(activeSigner);
       
       const decrypted = await decryptPII(
         payload.ciphertext,
         payload.dataToEncryptHash,
-        walletAddress || '',
+        activeSigner.address,
         adminAddress,
         authSig
       );
@@ -472,7 +325,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
       addLog(`Test decryption error: ${errMsg}`);
       throw err;
     }
-  }, [walletAddress, adminAddress, connectWallet, addLog]);
+  }, [walletAddress, adminAddress, addLog]);
 
   // Load models on mount automatically
   useEffect(() => {

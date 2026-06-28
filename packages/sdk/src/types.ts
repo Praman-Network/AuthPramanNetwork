@@ -3,6 +3,7 @@ export interface PramanConfig {
   network: string;
   webhookUrl?: string;
   adminAddress?: string;
+  backendUrl?: string;
   liveness?: boolean | 'strict' | 'standard' | 'off';
   livenessLevel?: 'strict' | 'standard' | 'off';
 }

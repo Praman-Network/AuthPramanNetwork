@@ -1,6 +1,70 @@
 import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
+import dotenv from 'dotenv';
+import snarkjs from 'snarkjs';
+import fs from 'fs';
+
+dotenv.config();
+
+// Load contract config
+const faceRegistryConfig = JSON.parse(
+  fs.readFileSync(new URL('../../packages/sdk/src/contracts/FaceRegistry.json', import.meta.url))
+);
+
+// Load SnarkJS verification key if exists
+let vKey = null;
+try {
+  vKey = JSON.parse(
+    fs.readFileSync(new URL('../../build/verification_key.json', import.meta.url))
+  );
+} catch (e) {
+  try {
+    vKey = JSON.parse(
+      fs.readFileSync(new URL('../../apps/identity-provider/public/zk/verification_key.json', import.meta.url))
+    );
+  } catch (err) {
+    console.warn("[PramanVerifyServer] Warning: verification_key.json not found. Real ZK proof verification will fail.");
+  }
+}
+
+const provider = new ethers.JsonRpcProvider("https://rpc-amoy.polygon.technology");
+const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY;
+if (!relayerPrivateKey) {
+  console.warn("[PramanVerifyServer] Warning: RELAYER_PRIVATE_KEY environment variable is missing. Relayer transactions will fail.");
+}
+const relayerWallet = relayerPrivateKey ? new ethers.Wallet(relayerPrivateKey, provider) : null;
+const contract = relayerWallet ? new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, relayerWallet) : null;
+
+// Pinata Upload helper
+async function uploadToIPFS(payload) {
+  const jwt = process.env.PINATA_JWT || process.env.VITE_PINATA_JWT || process.env.PINATA_API_KEY;
+  if (!jwt) {
+    throw new Error("Server Error: PINATA_JWT environment variable is missing.");
+  }
+
+  const response = await fetch('https://api.pinata.cloud/pinning/pinJSONToIPFS', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`,
+    },
+    body: JSON.stringify({
+      pinataContent: payload,
+      pinataMetadata: {
+        name: `pramanauth_${payload.userAddress.slice(0, 8)}.json`,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Pinata upload failed with status ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  return { cid: data.IpfsHash };
+}
 
 const app = express();
 app.use(cors());
@@ -162,6 +226,154 @@ app.get('/api/handover/status/:sessionId', (req, res) => {
     status: session.status,
     result: session.result,
   });
+});
+
+// POST /api/auth/register
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { apiKey, userAddress, faceDescriptorHash, quantizedVector, ciphertext, dataToEncryptHash, authSig } = req.body;
+
+    // 1. Validate Developer API Key
+    if (!apiKey || !apiKey.startsWith('pm_')) {
+      return res.status(401).json({ success: false, error: 'Invalid or missing API Key.' });
+    }
+
+    // 2. Validate inputs
+    if (!userAddress || !faceDescriptorHash || !quantizedVector || !ciphertext || !dataToEncryptHash) {
+      return res.status(400).json({ success: false, error: 'Missing registration parameters.' });
+    }
+
+    // 3. Cryptographically verify user authorization signature (SIWE format)
+    if (!authSig || !authSig.sig || !authSig.signedMessage) {
+      return res.status(400).json({ success: false, error: 'Missing cryptographic authorization signature (authSig).' });
+    }
+    const recoveredAddress = ethers.verifyMessage(authSig.signedMessage, authSig.sig);
+    if (recoveredAddress.toLowerCase() !== userAddress.toLowerCase()) {
+      return res.status(401).json({ success: false, error: 'Authorization signature mismatch. Registration denied.' });
+    }
+
+    // 4. Verify duplicate registration check on-chain first before uploading to IPFS
+    if (!contract) {
+      return res.status(500).json({ success: false, error: 'Backend contract connection is not initialized.' });
+    }
+    const storedFaceHash = await contract.getUserFaceHash(userAddress);
+    const zeroHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    if (storedFaceHash !== zeroHash && storedFaceHash !== '0x') {
+      return res.status(400).json({ success: false, error: 'User wallet already registered.' });
+    }
+
+    const isFaceRegistered = await contract.isFaceRegistered(faceDescriptorHash);
+    if (isFaceRegistered) {
+      return res.status(400).json({ success: false, error: 'Biometric face identity already registered.' });
+    }
+
+    // 5. Secure Pinata IPFS Upload on backend
+    const ipfsPayload = {
+      ciphertext,
+      dataToEncryptHash,
+      faceDescriptorHash,
+      quantizedVector,
+      userAddress,
+    };
+    const ipfsResult = await uploadToIPFS(ipfsPayload);
+
+    // 6. Broadcast Gas-sponsored contract transaction
+    console.log(`[Relayer] Registering face hash ${faceDescriptorHash} for user ${userAddress} gaslessly...`);
+    const tx = await contract.registerFaceFor(userAddress, faceDescriptorHash, ipfsResult.cid, {
+      maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei'),
+      maxFeePerGas: ethers.parseUnits('35', 'gwei'),
+      gasLimit: 300000
+    });
+    
+    console.log(`[Relayer] Sent transaction: ${tx.hash}. Waiting for block confirmation...`);
+    const receipt = await tx.wait();
+
+    if (receipt.status === 0) {
+      throw new Error("On-chain transaction reverted.");
+    }
+    console.log(`[Relayer] Transaction confirmed in block ${receipt.blockNumber}!`);
+
+    return res.json({
+      success: true,
+      faceDescriptorHash,
+      ipfsCid: ipfsResult.cid,
+      txHash: tx.hash,
+    });
+  } catch (error) {
+    console.error('[Relayer Error] Registration failed:', error);
+    return res.status(500).json({ success: false, error: error.message || 'Internal Relayer Error' });
+  }
+});
+
+// POST /api/auth/login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { apiKey, userAddress, zkProof, publicSignals, is_mock } = req.body;
+
+    // 1. Validate Developer API Key
+    if (!apiKey || !apiKey.startsWith('pm_')) {
+      return res.status(401).json({ success: false, error: 'Invalid or missing API Key.' });
+    }
+
+    if (!userAddress || !zkProof || !publicSignals) {
+      return res.status(400).json({ success: false, error: 'Missing login verification parameters.' });
+    }
+
+    // 2. Query FaceRegistry contract to get registered face hash
+    if (!contract) {
+      return res.status(500).json({ success: false, error: 'Backend contract connection is not initialized.' });
+    }
+    const storedFaceHash = await contract.getUserFaceHash(userAddress);
+    const zeroHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
+    if (storedFaceHash === zeroHash || storedFaceHash === '0x') {
+      return res.status(404).json({ success: false, error: 'User is not registered.' });
+    }
+
+    // 3. Environment check for Mock Proofs
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (is_mock) {
+      if (isProduction) {
+        return res.status(400).json({
+          success: false,
+          error: 'Critical Security Error: Mock ZK proof is rejected in production mode.'
+        });
+      }
+      console.warn('[Relayer] Warning: Accepting mock ZK proof in development mode.');
+      return res.json({ success: true, verified: true, is_mock: true });
+    }
+
+    // 4. Verify Real ZK-SNARK Proof off-chain using SnarkJS
+    if (!vKey) {
+      return res.status(500).json({
+        success: false,
+        error: 'Verification Key (vkey) is not loaded on the server. Cannot verify real ZK proofs.'
+      });
+    }
+
+    // Verify publicSignals matching on-chain data
+    // publicSignals[2] is the registered face descriptor hash in hex
+    const publicSignalsHash = publicSignals[2];
+    if (publicSignalsHash.toLowerCase() !== storedFaceHash.toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        error: 'ZK Proof public signals do not match registered on-chain face hash.'
+      });
+    }
+
+    const verified = await snarkjs.groth16.verify(vKey, publicSignals, zkProof);
+    if (!verified) {
+      return res.status(401).json({ success: false, error: 'ZK proof verification failed.' });
+    }
+
+    return res.json({
+      success: true,
+      verified: true,
+      is_mock: false,
+    });
+  } catch (error) {
+    console.error('[Relayer Error] Login verification failed:', error);
+    return res.status(500).json({ success: false, error: error.message || 'Internal Relayer Error' });
+  }
 });
 
 const PORT = process.env.PORT || 4000;

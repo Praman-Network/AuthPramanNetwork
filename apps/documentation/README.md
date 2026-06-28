@@ -2,7 +2,9 @@
 
 **Status:** 🧪 Beta | **Network:** Polygon Amoy (Testnet)
 
-Welcome to the PramanAuth SDK documentation. PramanAuth is a decentralized Identity-as-a-Service (IaaS) offering privacy-preserving, zero-knowledge (ZK) biometric authentication.
+Welcome to the PramanAuth SDK documentation. PramanAuth is a decentralized Identity-as-a-Service (IaaS) offering privacy-preserving, zero-knowledge (ZK) biometric authentication. 
+
+Under the new **Web2.5 Hybrid Relayer (BaaS)** architecture, transactions are gasless, there are no MetaMask popups for the user, and all IPFS uploads/contract writes are handled securely off-chain by our backend relayer.
 
 ---
 
@@ -18,15 +20,15 @@ npm install @praman/sdk
 
 ## 1. Initialization
 
-Initialize the SDK instance inside your app config or root component (compatible with both Next.js and Vite):
+Initialize the SDK instance inside your app config or root component (compatible with both Next.js and Vite). Pass the `backendUrl` of your Backend Relayer:
 
 ```typescript
 import { initPraman } from '@praman/sdk';
 
 const praman = initPraman({
   apiKey: "pm_live_your_api_key_here",
-  network: "polygon-amoy", // or local
-  webhookUrl: "https://your-backend.com/api/praman-events" // optional billing/analytics tracking
+  network: "polygon-amoy",
+  backendUrl: "https://your-relayer-backend.com" // Backend Relayer URL
 });
 ```
 
@@ -34,22 +36,20 @@ const praman = initPraman({
 
 ## 2. Triggering Login Flow
 
-During login, your app scans the user's face, captures a webcam frame base64 string, and calls the SDK `login` method. 
+During login, your app scans the user's face, captures a webcam frame base64 string, and calls the SDK `login` method. The SDK generates a ZK proof locally in the browser and verifies it off-chain via your Backend Relayer.
 
 ```typescript
-import { useWallet } from './your-wallet-context'; // get signer / provider
-
 const handleLogin = async (webcamScreenshotBase64: string) => {
   const result = await praman.login(
     webcamScreenshotBase64,
-    signer,
-    window.faceapi // pass loaded faceapi instance
+    null,          // No MetaMask signer required!
+    window.faceapi // Pass loaded faceapi instance
   );
 
   if (result.success) {
     console.log("Decentralized Session Token:", result.jwt);
     console.log("ZK Proof details:", result.proof);
-    console.log("Is Mock Proof:", result.is_mock); // Boolean flag representing proof authenticity
+    console.log("Is Mock Proof:", result.is_mock); // Flag representing proof authenticity
     
     // Send token to your backend server for verification!
     const response = await fetch('/api/verify', {
@@ -71,20 +71,20 @@ const handleLogin = async (webcamScreenshotBase64: string) => {
 
 ## 3. Triggering Registration Flow
 
-During registration, gather user form data, scan their face, and invoke `register`:
+During registration, gather user form data, scan their face, and invoke `register`. The relayer automatically pays the gas fees:
 
 ```typescript
 const handleRegister = async (webcamScreenshotBase64: string, pii: { name: string, email: string, mobile: string }) => {
   const result = await praman.register(
     webcamScreenshotBase64,
     pii,
-    signer,
+    null, // No MetaMask signer required! Gas is sponsored by Relayer.
     window.faceapi
   );
 
   if (result.success) {
     console.log("Registered identity session JWT:", result.jwt);
-    alert("Biometric credentials registered on-chain successfully!");
+    alert("Biometric credentials registered gaslessly on-chain successfully!");
   } else {
     alert("Registration failed: " + result.error);
   }

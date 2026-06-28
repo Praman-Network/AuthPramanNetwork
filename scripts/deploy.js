@@ -24,8 +24,8 @@ async function main() {
   const FaceRegistry = await ethers.getContractFactory("FaceRegistry");
   console.log("Sending deployment transaction...");
   const contract = await FaceRegistry.deploy({
-    gasLimit: 500000,
-    maxFeePerGas: ethers.parseUnits('40', 'gwei'),
+    gasLimit: 1000000,
+    maxFeePerGas: ethers.parseUnits('35', 'gwei'),
     maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei')
   });
   

@@ -2,6 +2,9 @@
 pragma solidity ^0.8.20;
 
 contract FaceRegistry {
+    // Contract owner (the authorized relayer)
+    address public owner;
+
     // Mapping from hashed face vector (bytes32) to registration state
     mapping(bytes32 => bool) private _registeredFaces;
     
@@ -16,9 +19,32 @@ contract FaceRegistry {
     mapping(address => bytes32) public addressToFace;
 
     event FaceRegistered(address indexed user, bytes32 indexed faceHash, string ipfsCid);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     error FaceAlreadyRegistered();
     error UserAlreadyRegistered();
+    error NotOwner();
+
+    constructor() {
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), msg.sender);
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) {
+            revert NotOwner();
+        }
+        _;
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account.
+     */
+    function transferOwnership(address newOwner) public onlyOwner {
+        require(newOwner != address(0), "New owner cannot be zero address");
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
 
     /**
      * @dev Checks if a face hash is already registered in the system.
@@ -52,7 +78,27 @@ contract FaceRegistry {
     }
 
     /**
-     * @dev Registers a face hash and links it to an IPFS CID.
+     * @dev Registers a face hash and links it to an IPFS CID on behalf of a user.
+     * Can only be called by the contract owner (the Backend Relayer).
+     */
+    function registerFaceFor(address user, bytes32 hash, string memory cid) public onlyOwner {
+        require(faceToMasterWallet[hash] == address(0), "Face already registered");
+        require(addressToFace[user] == bytes32(0), "Wallet already registered");
+
+        // Update mappings
+        faceToMasterWallet[hash] = user;
+        addressToFace[user] = hash;
+
+        // Maintain legacy mappings for backward compatibility
+        _registeredFaces[hash] = true;
+        _faceCids[hash] = cid;
+        _userFaceHashes[user] = hash;
+
+        emit FaceRegistered(user, hash, cid);
+    }
+
+    /**
+     * @dev Registers a face hash and links it to an IPFS CID (direct client transaction).
      * Prevents duplicates (Sybil resistance).
      */
     function registerFace(bytes32 hash, string memory cid) public {

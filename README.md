@@ -2,7 +2,7 @@
 
 **Status:** 🧪 Beta | **Network:** Polygon Amoy (Testnet)
 
-PramanAuth is a decentralized, privacy-preserving Identity-as-a-Service (IaaS) platform offering zero-knowledge (ZK) biometric authentication. It enables trustless identity validation on Web3 applications without centralized biometric databases.
+PramanAuth is a **Web2.5 Hybrid Relayer (BaaS)** platform offering gasless, privacy-preserving zero-knowledge (ZK) biometric authentication. It enables trustless identity validation on applications with **zero gas fees for end-users, no MetaMask popups, and secure backend-managed keys.**
 
 ---
 
@@ -10,15 +10,15 @@ PramanAuth is a decentralized, privacy-preserving Identity-as-a-Service (IaaS) p
 
 This is a monorepo containing all components of the PramanAuth network:
 
-*   **[`packages/sdk`](file:///Users/rahulchaudhary/pramanauth/packages/sdk)**: The core PramanAuth TypeScript/React SDK for developers.
-*   **[`apps/identity-provider`](file:///Users/rahulchaudhary/pramanauth/apps/identity-provider)**: Client-facing React/Vite app containing the webcam scanners, face-matching algorithms, and ZK proof generation.
-*   **[`server/verify-endpoint`](file:///Users/rahulchaudhary/pramanauth/server/verify-endpoint)**: A lightweight reference backend implementation to verify signed session tokens.
+*   **[`packages/sdk`](file:///Users/rahulchaudhary/pramanauth/packages/sdk)**: The core PramanAuth TypeScript/React SDK. Handles local biometric scanning, liveness detection, and client-side ZK-Proof generation.
+*   **[`apps/identity-provider`](file:///Users/rahulchaudhary/pramanauth/apps/identity-provider)**: Client-facing React/Vite Identity Provider application.
+*   **[`server/verify-endpoint`](file:///Users/rahulchaudhary/pramanauth/server/verify-endpoint)**: Backend Relayer service. Handles Pinata IPFS uploads, pays transaction gas on Polygon Amoy, and verifies ZK proofs off-chain.
 *   **[`circuits`](file:///Users/rahulchaudhary/pramanauth/circuits)**: Circom zero-knowledge matching circuits (`face_verify.circom`).
-*   **[`contracts`](file:///Users/rahulchaudhary/pramanauth/contracts)**: Solidity smart contracts (`FaceRegistry.sol`) running on-chain.
+*   **[`contracts`](file:///Users/rahulchaudhary/pramanauth/contracts)**: Solidity smart contracts (`FaceRegistry.sol`).
 
 ---
 
-## SDK Integration Guide
+## SDK Integration Guide (Gasless Web2.5)
 
 ### Installation
 
@@ -30,30 +30,28 @@ npm install @praman/sdk
 
 ### 1. Initialization
 
-Initialize the SDK instance inside your app config or root component (compatible with both Next.js and Vite):
+Initialize the SDK instance inside your app config or root component. Pass the Backend Relayer URL so that the SDK can delegate blockchain transactions and storage uploads:
 
 ```typescript
 import { initPraman } from '@praman/sdk';
 
 const praman = initPraman({
   apiKey: "pm_live_your_api_key_here",
-  network: "polygon-amoy", // or local
-  webhookUrl: "https://your-backend.com/api/praman-events" // optional billing/analytics tracking
+  network: "polygon-amoy",
+  backendUrl: "https://your-relayer-backend.com" // Your Backend Relayer URL
 });
 ```
 
 ### 2. Triggering Login Flow
 
-During login, your app scans the user's face, captures a webcam frame base64 string, and calls the SDK `login` method. 
+During login, capture a webcam frame base64 string and call the SDK `login` method. The SDK generates a ZK proof locally in the browser and verifies it off-chain via your Backend Relayer. 
 
 ```typescript
-import { useWallet } from './your-wallet-context'; // get signer / provider
-
 const handleLogin = async (webcamScreenshotBase64: string) => {
   const result = await praman.login(
     webcamScreenshotBase64,
-    signer,
-    window.faceapi // pass loaded faceapi instance
+    null,          // No MetaMask signer required! Falls back to local ephemeral wallet.
+    window.faceapi // Pass loaded faceapi instance
   );
 
   if (result.success) {
@@ -79,20 +77,20 @@ const handleLogin = async (webcamScreenshotBase64: string) => {
 
 ### 3. Triggering Registration Flow
 
-During registration, gather user form data, scan their face, and invoke `register`:
+During registration, gather user form data, scan their face, and invoke `register`. The relayer automatically pays the gas fees:
 
 ```typescript
 const handleRegister = async (webcamScreenshotBase64: string, pii: { name: string, email: string, mobile: string }) => {
   const result = await praman.register(
     webcamScreenshotBase64,
     pii,
-    signer,
+    null, // No MetaMask signer required! Gas is sponsored by Backend Relayer.
     window.faceapi
   );
 
   if (result.success) {
     console.log("Registered identity session JWT:", result.jwt);
-    alert("Biometric credentials registered on-chain successfully!");
+    alert("Biometric credentials registered gaslessly on-chain successfully!");
   } else {
     alert("Registration failed: " + result.error);
   }

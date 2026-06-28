@@ -12,6 +12,7 @@ export class PramanClient {
   private apiKey: string;
   private network: string;
   private webhookUrl?: string;
+  private backendUrl: string;
   private adminAddress: string;
   private livenessLevel: 'strict' | 'standard' | 'off';
 
@@ -19,6 +20,7 @@ export class PramanClient {
     this.apiKey = config.apiKey;
     this.network = config.network;
     this.webhookUrl = config.webhookUrl;
+    this.backendUrl = config.backendUrl || 'http://localhost:4000';
     this.adminAddress = config.adminAddress || '0x499B85172C9a228eaE3D7723223DFF062bFdFd4D';
 
     // Normalize liveness level config
@@ -35,6 +37,23 @@ export class PramanClient {
     }
 
     this.validateApiKey();
+  }
+
+  /**
+   * Retrieves or generates a local ephemeral wallet for the current user session.
+   * This allows gasless transactions and login without MetaMask popups.
+   */
+  private getLocalEphemeralWallet(): ethers.Wallet {
+    if (typeof window === 'undefined') {
+      throw new Error('[PramanSDK] Ephemeral wallets can only be used in browser environments.');
+    }
+    let privateKey = localStorage.getItem('praman_local_ephemeral_key');
+    if (!privateKey) {
+      const newWallet = ethers.Wallet.createRandom();
+      localStorage.setItem('praman_local_ephemeral_key', newWallet.privateKey);
+      privateKey = newWallet.privateKey;
+    }
+    return new ethers.Wallet(privateKey);
   }
 
   public getLivenessLevel(): 'strict' | 'standard' | 'off' {
@@ -135,7 +154,7 @@ export class PramanClient {
   }
 
   /**
-   * Core Register logic wrapping extraction outputs.
+   * Core Register logic wrapping extraction outputs and relayer submission.
    */
   public async register(
     webcamScreenshot: string,
@@ -149,10 +168,11 @@ export class PramanClient {
       if (onProgress) onProgress({ step, message });
     };
 
+    const activeSigner = signer || this.getLocalEphemeralWallet();
     let userAddress = '';
     try {
-      userAddress = await signer.getAddress();
-      log('connecting-wallet', 'Validating wallet and address connection...');
+      userAddress = await activeSigner.getAddress();
+      log('connecting-wallet', `Registering address: ${userAddress}`);
 
       // 1. Process Frame (Face detection)
       log('scanning-face', 'Extracting facial profile descriptors...');
@@ -177,53 +197,54 @@ export class PramanClient {
       const faceDescriptorHash = hashFaceVector(quantizedNewVector);
       log('generating-vector', `Face vector quantized. Keccak Hash: ${faceDescriptorHash}`);
 
-      // 2. Registry Duplicate Safeguard Checks (strictly on-chain)
-      log('checking-duplicate', 'Checking on-chain registry mapping for duplicate identity...');
-      const contract = new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, signer);
-      
-      const storedFaceHash = await contract.getUserFaceHash(userAddress);
-      const zeroHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
-      const isRegistered = (storedFaceHash !== zeroHash && storedFaceHash !== '0x');
-
-      if (isRegistered) {
-        throw new Error('Identity already exists. Sybil attack prevented. Please login.');
-      }
-
-      // 3. Encryption via Lit Protocol (strictly enforced)
+      // 2. Encryption via Lit Protocol (strictly enforced)
       log('encrypting-pii', 'Securing PII payloads via decentralized Lit protocol...');
-      const authSig = await getManualAuthSig(signer);
+      const authSig = await getManualAuthSig(activeSigner);
       const encryptionResult = await encryptPII(pii, userAddress, this.adminAddress, authSig);
       
-      // 4. IPFS Upload (strictly required)
-      log('uploading-ipfs', 'Uploading secure biometric payload to IPFS repository...');
-      const ipfsPayload = {
-        ciphertext: encryptionResult.ciphertext,
-        dataToEncryptHash: encryptionResult.dataToEncryptHash,
-        faceDescriptorHash,
-        quantizedVector: quantizedNewVector,
-        userAddress,
-      };
-
-      const ipfsResult = await uploadToIPFS(ipfsPayload);
-      
-      // 5. Contract write transaction (strictly enforced)
-      log('registering-on-chain', 'Broadcasting registration transaction to blockchain registry...');
-      const tx = await contract.registerFace(faceDescriptorHash, ipfsResult.cid, {
-        maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei'),
-        maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-        gasLimit: 300000
+      // 3. Post payload to Backend Relayer for IPFS pinning and on-chain deployment
+      log('registering-on-chain', 'Sending registration details to Backend Relayer...');
+      const response = await fetch(`${this.backendUrl}/api/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          apiKey: this.apiKey,
+          userAddress,
+          faceDescriptorHash,
+          quantizedVector: quantizedNewVector,
+          ciphertext: encryptionResult.ciphertext,
+          dataToEncryptHash: encryptionResult.dataToEncryptHash,
+          authSig,
+        }),
       });
-      await tx.wait();
 
-      // Generate JWT Token
-      const jwt = await this.generateWalletSignedToken(signer, userAddress, faceDescriptorHash, ipfsResult.cid, pii.name);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Relayer Registration failed: ${errorText}`);
+      }
+
+      const relayerResult = await response.json();
+      if (!relayerResult.success) {
+        throw new Error(`Relayer Registration failed: ${relayerResult.error}`);
+      }
+
+      // Generate JWT Token locally using active ephemeral/MetaMask wallet
+      const jwt = await this.generateWalletSignedToken(
+        activeSigner,
+        userAddress,
+        faceDescriptorHash,
+        relayerResult.ipfsCid,
+        pii.name
+      );
 
       await this.trackUsage('register', userAddress, true);
       return {
         success: true,
         jwt,
         faceDescriptorHash,
-        ipfsCid: ipfsResult.cid,
+        ipfsCid: relayerResult.ipfsCid,
         pii,
       };
     } catch (err: any) {
@@ -238,7 +259,7 @@ export class PramanClient {
   }
 
   /**
-   * Core Login logic wrapping face-matching and ZK Proof validation.
+   * Core Login logic wrapping face-matching, ZK Proof validation, and Relayer verification.
    */
   public async login(
     webcamScreenshot: string,
@@ -251,10 +272,11 @@ export class PramanClient {
       if (onProgress) onProgress({ step, message });
     };
 
+    const activeSigner = signer || this.getLocalEphemeralWallet();
     let userAddress = '';
     try {
-      userAddress = await signer.getAddress();
-      log('connecting-wallet', 'Validating wallet and address connection...');
+      userAddress = await activeSigner.getAddress();
+      log('connecting-wallet', `Logging in address: ${userAddress}`);
 
       // 1. Process Frame (Face detection)
       log('scanning-face', 'Extracting facial profile descriptors...');
@@ -279,9 +301,10 @@ export class PramanClient {
       const faceDescriptorHash = hashFaceVector(quantizedNewVector);
       log('generating-vector', `Face vector quantized. Keccak Hash: ${faceDescriptorHash}`);
 
-      // 2. Fetch Registration details strictly from contract
-      log('checking-duplicate', 'Querying registry mapping for existing registration record...');
-      const contract = new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, signer);
+      // 2. Fetch Registration details from contract (Free read-only RPC call, no MetaMask popup!)
+      log('checking-duplicate', 'Querying registry contract for existing identity record...');
+      const readProvider = new ethers.JsonRpcProvider('https://rpc-amoy.polygon.technology');
+      const contract = new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, readProvider);
       
       const storedFaceHash = await contract.getUserFaceHash(userAddress);
       const zeroHash = '0x0000000000000000000000000000000000000000000000000000000000000000';
@@ -294,7 +317,7 @@ export class PramanClient {
       const registeredCid = await contract.getUserCid(userAddress);
       const registeredHash = storedFaceHash;
 
-      // 3. Load Saved Vector strictly from IPFS
+      // 3. Load Saved Vector from IPFS
       log('generating-vector', 'Fetching reference biometric template from IPFS...');
       const payload = await fetchFromIPFS(registeredCid);
       const savedVector = payload.quantizedVector;
@@ -303,14 +326,40 @@ export class PramanClient {
         throw new Error('Registered biometric template not found in IPFS payload.');
       }
 
-      // 4. Generate & verify ZK Face proof
+      // 4. Generate ZK Face proof locally
       log('generating-zk-proof', 'Running snarkjs.groth16 zero-knowledge proving verification...');
       const zkResult = await generateZKFaceProof(quantizedNewVector, savedVector, registeredHash);
 
-      // 5. Decrypt profile name (optional) from encrypted storage
+      // 5. Send ZK Proof to Backend Relayer for verification
+      log('generating-zk-proof', 'Verifying ZK proof off-chain on the Backend Relayer...');
+      const response = await fetch(`${this.backendUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          apiKey: this.apiKey,
+          userAddress,
+          zkProof: zkResult.proof,
+          publicSignals: zkResult.publicSignals,
+          is_mock: zkResult.is_mock,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Relayer Verification failed: ${errorText}`);
+      }
+
+      const relayerResult = await response.json();
+      if (!relayerResult.success || !relayerResult.verified) {
+        throw new Error(`Relayer Verification failed: ${relayerResult.error || 'Proof rejected'}`);
+      }
+
+      // 6. Decrypt profile name (optional) from encrypted storage
       let name: string | undefined = undefined;
       try {
-        const authSig = await getManualAuthSig(signer);
+        const authSig = await getManualAuthSig(activeSigner);
         const decrypted = await decryptPII(
           payload.ciphertext,
           payload.dataToEncryptHash,
@@ -323,9 +372,9 @@ export class PramanClient {
         console.warn('[PramanSDK] Failed to retrieve name during login, proceeding without it:', e);
       }
 
-      // Generate JWT Token
+      // Generate JWT Token locally
       const jwt = await this.generateWalletSignedToken(
-        signer,
+        activeSigner,
         userAddress,
         registeredHash,
         registeredCid,
