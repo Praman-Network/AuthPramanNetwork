@@ -21,6 +21,7 @@ export interface AuthResult {
   error?: string;
   livenessScore?: number;
   handoverSessionId?: string;
+  is_mock?: boolean;
 }
 
 export interface ProgressStepData {

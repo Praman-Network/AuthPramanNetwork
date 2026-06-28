@@ -81,6 +81,7 @@ app.post('/verify', (req, res) => {
     faceHash: result.payload.faceHash,
     ipfsCid: result.payload.ipfsCid,
     name: result.payload.name || null,
+    is_mock: result.payload.is_mock || false,
   });
 });
 

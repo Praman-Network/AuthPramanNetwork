@@ -92,7 +92,8 @@ export class PramanClient {
     faceHash: string,
     ipfsCid: string,
     name?: string,
-    expiryDuration?: number
+    expiryDuration?: number,
+    isMock?: boolean
   ): Promise<string> {
     const header = {
       alg: 'ETH_SIGN',
@@ -108,6 +109,7 @@ export class PramanClient {
       iat,
       exp,
       iss: 'pramanauth',
+      is_mock: isMock ?? false,
     };
 
     if (name) {
@@ -322,7 +324,15 @@ export class PramanClient {
       }
 
       // Generate JWT Token
-      const jwt = await this.generateWalletSignedToken(signer, userAddress, registeredHash, registeredCid, name);
+      const jwt = await this.generateWalletSignedToken(
+        signer,
+        userAddress,
+        registeredHash,
+        registeredCid,
+        name,
+        undefined,
+        zkResult.is_mock
+      );
 
       await this.trackUsage('login', userAddress, true);
       return {
@@ -331,6 +341,7 @@ export class PramanClient {
         proof: zkResult.proof,
         faceDescriptorHash: registeredHash,
         ipfsCid: registeredCid,
+        is_mock: zkResult.is_mock,
       };
     } catch (err: any) {
       const errMsg = err.message || 'SDK Login failed';

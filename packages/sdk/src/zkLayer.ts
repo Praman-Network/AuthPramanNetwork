@@ -47,7 +47,7 @@ export async function generateZKFaceProof(
   newVector: number[],
   savedVector: number[],
   savedVectorHash: string
-): Promise<{ proof: ZKProofObject; publicSignals: string[]; usedMock: boolean }> {
+): Promise<{ proof: ZKProofObject; publicSignals: string[]; usedMock: boolean; is_mock: boolean }> {
   // Simulate processing delay (mimicking client-side WASM compute time)
   await new Promise((resolve) => setTimeout(resolve, 1500));
 
@@ -97,6 +97,7 @@ export async function generateZKFaceProof(
       },
       publicSignals,
       usedMock: false,
+      is_mock: false,
     };
   } catch (error: any) {
     // If this is a face-mismatch error, re-throw it — do NOT fall back to mock
@@ -108,9 +109,18 @@ export async function generateZKFaceProof(
       throw error;
     }
 
+    // Environment-Aware Security Guard
+    const isProduction = typeof import.meta !== 'undefined' && (import.meta as any).env?.MODE === 'production';
+    if (isProduction) {
+      throw new Error(
+        `Critical Security Error: Real ZK proof generation failed in production mode. ` +
+        `Mock proof generation is disabled. Details: ${error?.message || error}`
+      );
+    }
+
     // ZK circuit files missing — fall back to simulation proof
     // Face similarity was already verified above, so this is safe
-    console.warn('[ZK] Real ZK files missing — using simulation proof. Details:', error);
+    console.warn('⚠️ SECURITY WARNING: Using mock ZK-Proof in development mode.');
 
     const matchSignal = '1'; // We already passed computeFaceSimilarity above
     const publicSignals = [
@@ -153,6 +163,7 @@ export async function generateZKFaceProof(
       proof: mockProof,
       publicSignals,
       usedMock: true,
+      is_mock: true,
     };
   }
 }
