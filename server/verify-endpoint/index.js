@@ -355,12 +355,19 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Verify publicSignals matching on-chain data
-    // publicSignals[2] is the registered face descriptor hash in hex
-    const publicSignalsHash = publicSignals[2];
-    if (publicSignalsHash.toLowerCase() !== storedFaceHash.toLowerCase()) {
+    // publicSignals[2] is the registered face descriptor hash (represented as decimal in real proof, hex in mock)
+    try {
+      const publicSignalsHash = publicSignals[2];
+      if (BigInt(publicSignalsHash) !== BigInt(storedFaceHash)) {
+        return res.status(400).json({
+          success: false,
+          error: 'ZK Proof public signals do not match registered on-chain face hash.'
+        });
+      }
+    } catch (e) {
       return res.status(400).json({
         success: false,
-        error: 'ZK Proof public signals do not match registered on-chain face hash.'
+        error: 'Failed to compare ZK Proof public signals with registered face hash. Invalid format.'
       });
     }
 
