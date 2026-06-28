@@ -1,0 +1,33 @@
+{
+  "name": "@praman/sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./contracts/*": "./src/contracts/*"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch"
+  },
+  "dependencies": {
+    "@lit-protocol/lit-node-client": "^7.4.0",
+    "@mediapipe/tasks-vision": "^0.10.35",
+    "ethers": "^6.17.0",
+    "snarkjs": "^0.7.6"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.2",
+    "typescript": "^5.0.0"
+  }
+}

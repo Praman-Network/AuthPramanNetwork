@@ -1,0 +1,58 @@
+# --- SENSITIVE DATA (THE MAGIC) ---
+.env
+.env.local
+.env.production
+.env.development
+*.pem
+*.key
+*.secret
+*.p12
+
+# --- ZK CIRCUIT INPUTS & WITNESSES (SECURITY CRITICAL) ---
+**/input.json
+**/*.wtns
+**/witness.json
+**/witness_*.json
+
+# --- DEPENDENCIES ---
+node_modules/
+
+# --- BUILD OUTPUTS ---
+dist/
+build/
+out/
+.next/
+.turbo/
+
+# --- DEVELOPMENT CACHES ---
+.eslintcache
+*.tsbuildinfo
+.pnpm-store
+.yarn/cache
+
+# --- DATABASE & STORAGE ---
+*.db
+*.sqlite
+*.sqlite3
+
+# --- DEPLOYMENT METADATA ---
+.vercel/
+.netlify/
+.serverless/
+
+# --- TESTING REPORTS ---
+coverage/
+
+# --- OS GENERATED FILES ---
+.DS_Store
+Thumbs.db
+
+# --- LOGS ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- HARDHAT/SOLIDITY ARTIFACTS ---
+cache/
+artifacts/

@@ -1,0 +1,11 @@
+export { initPraman, PramanClient } from './client';
+export type { PramanConfig, AuthResult, ProgressStepData, PramanErrorType } from './types';
+export { PramanErrors } from './types';
+export { quantizeFaceVector, hashFaceVector } from './biometrics';
+export { generateZKFaceProof } from './zkLayer';
+export { encryptPII, uploadToIPFS, getManualAuthSig, decryptPII, getPermissionAuthSig, fetchFromIPFS } from './storageLayer';
+export { default as FaceRegistryConfig } from './contracts/FaceRegistry.json';
+export { PramanAuth } from './PramanAuth';
+export { LivenessGuard, useLivenessGuard } from './liveness';
+export { DeviceGuard } from './device';
+

@@ -1,0 +1,40 @@
+{
+  "name": "identity-provider",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@lit-protocol/lit-node-client": "^7.4.0",
+    "@mediapipe/tasks-vision": "^0.10.35",
+    "@praman/sdk": "*",
+    "@vladmandic/face-api": "^1.7.15",
+    "autoprefixer": "^10.5.2",
+    "circomlib": "^2.0.5",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.17.0",
+    "postcss": "^8.5.15",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "react-webcam": "^7.2.0",
+    "snarkjs": "^0.7.6",
+    "tailwindcss": "^3.4.19",
+    "vite-plugin-node-polyfills": "^0.28.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.0.13",
+    "@nomicfoundation/hardhat-toolbox": "^6.1.2",
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "hardhat": "^3.9.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.0"
+  }
+}
