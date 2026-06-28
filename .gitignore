@@ -55,4 +55,6 @@ yarn-error.log*
 
 # --- HARDHAT/SOLIDITY ARTIFACTS ---
 cache/
+artifacts/bin/
 artifacts/
+cache/
