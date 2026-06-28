@@ -4,8 +4,12 @@ import { ethers } from 'ethers';
 import dotenv from 'dotenv';
 import * as snarkjs from 'snarkjs';
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '.env') });      // Load local verify-endpoint/.env first
+dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Fallback to workspace root .env
 
 // Load contract config
 const faceRegistryConfig = JSON.parse(
@@ -29,9 +33,9 @@ try {
 }
 
 const provider = new ethers.JsonRpcProvider("https://rpc-amoy.polygon.technology");
-const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY;
+const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY || process.env.PRIVATE_KEY;
 if (!relayerPrivateKey) {
-  console.warn("[PramanVerifyServer] Warning: RELAYER_PRIVATE_KEY environment variable is missing. Relayer transactions will fail.");
+  console.warn("[PramanVerifyServer] Warning: RELAYER_PRIVATE_KEY and PRIVATE_KEY environment variables are missing. Relayer transactions will fail.");
 }
 const relayerWallet = relayerPrivateKey ? new ethers.Wallet(relayerPrivateKey, provider) : null;
 const contract = relayerWallet ? new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, relayerWallet) : null;
