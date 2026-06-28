@@ -355,10 +355,22 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     // Verify publicSignals matching on-chain data
-    // publicSignals[2] is the registered face descriptor hash (represented as decimal in real proof, hex in mock)
+    // For real ZK proofs, publicSignals[0] is isMatch, and publicSignals[1...128] contains the reference vector.
+    // We compute the Keccak256 hash of this reference vector and compare it with the registered storedFaceHash.
     try {
-      const publicSignalsHash = publicSignals[2];
-      if (BigInt(publicSignalsHash) !== BigInt(storedFaceHash)) {
+      const publicSavedVector = publicSignals.slice(1, 129).map(x => Number(x));
+      if (publicSavedVector.length !== 128) {
+        return res.status(400).json({
+          success: false,
+          error: `ZK Proof public signals must contain 128 elements of reference vector, got ${publicSavedVector.length}`
+        });
+      }
+      
+      const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+      const encoded = abiCoder.encode(['int256[128]'], [publicSavedVector]);
+      const calculatedHash = ethers.keccak256(encoded);
+
+      if (calculatedHash.toLowerCase() !== storedFaceHash.toLowerCase()) {
         return res.status(400).json({
           success: false,
           error: 'ZK Proof public signals do not match registered on-chain face hash.'
@@ -367,7 +379,7 @@ app.post('/api/auth/login', async (req, res) => {
     } catch (e) {
       return res.status(400).json({
         success: false,
-        error: 'Failed to compare ZK Proof public signals with registered face hash. Invalid format.'
+        error: `Failed to verify ZK Proof public signals vector format: ${e.message}`
       });
     }
 
