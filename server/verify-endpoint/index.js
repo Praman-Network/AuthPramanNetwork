@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { ethers } from 'ethers';
 import dotenv from 'dotenv';
-import snarkjs from 'snarkjs';
+import * as snarkjs from 'snarkjs';
 import fs from 'fs';
 
 dotenv.config();
