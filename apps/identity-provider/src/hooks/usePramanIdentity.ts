@@ -211,6 +211,8 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
       return {
         ipfsCid: result.ipfsCid,
         faceDescriptorHash: result.faceDescriptorHash,
+        jwt: result.jwt,
+        pii: result.pii,
       };
     } catch (err: any) {
       const errMsg = err.message || 'Registration flow failed';
@@ -281,6 +283,8 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
         ipfsCid: result.ipfsCid,
         zkProof: result.proof,
         faceDescriptorHash: result.faceDescriptorHash,
+        jwt: result.jwt,
+        pii: result.pii,
       };
     } catch (err: any) {
       const errMsg = err.message || 'Login flow failed';

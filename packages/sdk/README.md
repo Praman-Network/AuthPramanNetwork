@@ -1,26 +1,14 @@
-# PramanAuth Network
+# PramanAuth SDK Developer Documentation
 
 **Status:** 🧪 Beta | **Network:** Polygon Amoy (Testnet)
 
-PramanAuth is a **Web2.5 Hybrid Relayer (BaaS)** platform offering gasless, privacy-preserving zero-knowledge (ZK) biometric authentication. It enables trustless identity validation on applications with **zero gas fees for end-users, no MetaMask popups, and secure backend-managed keys.**
+Welcome to the PramanAuth SDK documentation. PramanAuth is a decentralized Identity-as-a-Service (IaaS) offering privacy-preserving, zero-knowledge (ZK) biometric authentication. 
+
+Under the new **Web2.5 Hybrid Relayer (BaaS)** architecture, transactions are gasless, there are no MetaMask popups for the user, and all IPFS uploads/contract writes are handled securely off-chain by our backend relayer.
 
 ---
 
-## Project Repository Architecture
-
-This is a monorepo containing all components of the PramanAuth network:
-
-*   **[`packages/sdk`](file:///Users/rahulchaudhary/pramanauth/packages/sdk)**: The core PramanAuth TypeScript/React SDK. Handles local biometric scanning, liveness detection, and client-side ZK-Proof generation.
-*   **[`apps/identity-provider`](file:///Users/rahulchaudhary/pramanauth/apps/identity-provider)**: Client-facing React/Vite Identity Provider application.
-*   **[`server/verify-endpoint`](file:///Users/rahulchaudhary/pramanauth/server/verify-endpoint)**: Backend Relayer service. Handles Pinata IPFS uploads, pays transaction gas on Polygon Amoy, and verifies ZK proofs off-chain.
-*   **[`circuits`](file:///Users/rahulchaudhary/pramanauth/circuits)**: Circom zero-knowledge matching circuits (`face_verify.circom`).
-*   **[`contracts`](file:///Users/rahulchaudhary/pramanauth/contracts)**: Solidity smart contracts (`FaceRegistry.sol`).
-
----
-
-## SDK Integration Guide (Gasless Web2.5)
-
-### Installation
+## Installation
 
 Add the SDK package to your frontend project:
 
@@ -28,9 +16,11 @@ Add the SDK package to your frontend project:
 npm install @praman/sdk
 ```
 
-### 1. Initialization
+---
 
-Initialize the SDK instance inside your app config or root component. Pass the Backend Relayer URL so that the SDK can delegate blockchain transactions and storage uploads:
+## 1. Initialization
+
+Initialize the SDK instance inside your app config or root component (compatible with both Next.js and Vite). Pass the `backendUrl` of your Backend Relayer:
 
 ```typescript
 import { initPraman } from '@praman/sdk';
@@ -38,11 +28,13 @@ import { initPraman } from '@praman/sdk';
 const praman = initPraman({
   apiKey: "pm_live_your_api_key_here",
   network: "polygon-amoy",
-  backendUrl: "https://your-relayer-backend.com" // Your Backend Relayer URL
+  backendUrl: "https://your-relayer-backend.com" // Backend Relayer URL
 });
 ```
 
-### 2. Triggering Popup Authentication (Firebase-style UX)
+---
+
+## 2. Triggering Popup Authentication (Firebase-style UX)
 
 You can launch a centered OAuth-style popup window for face scanning and consent verification by calling `loginWithPopup()` or `registerWithPopup()`.
 
@@ -105,7 +97,9 @@ export function App() {
 }
 ```
 
-### 3. Registering New Users
+---
+
+## 3. Registering New Users
 
 If you want to onboard a new user, call `registerWithPopup()` with custom options. It displays the registration inputs and secures their credentials:
 
@@ -126,7 +120,7 @@ const handleRegister = async () => {
 
 ---
 
-## Verification & Backend Integration
+## 4. Verifying Token (Client-Side & Backend)
 
 ### Client-Side Decrypt/Read
 You can quickly read and verify token contents in the client browser:
@@ -154,8 +148,8 @@ The PramanAuth SDK is production-hardened to prevent development simulation tool
 
 > [!WARNING]
 > **Environment Guard:** In production mode, the SDK enforces a strict **hard-fail** policy. If real ZK proof generation fails (due to missing static files like `.wasm`/`.zkey`, or browser resource exhaustion), it will throw a critical error rather than falling back to a mock proof. 
-> 
-> Ensure that your production bundler config or environment variable (`import.meta.env.MODE` for Vite or `process.env.NODE_ENV` for Node environments) is correctly set to `'production'` in your deployed builds.
+
+Ensure that your production bundler config or environment variable (`import.meta.env.MODE` for Vite or `process.env.NODE_ENV` for Node environments) is correctly set to `'production'` in your deployed builds.
 
 ---
 

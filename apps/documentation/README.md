@@ -34,59 +34,86 @@ const praman = initPraman({
 
 ---
 
-## 2. Triggering Login Flow
+## 2. Triggering Popup Authentication (Firebase-style UX)
 
-During login, your app scans the user's face, captures a webcam frame base64 string, and calls the SDK `login` method. The SDK generates a ZK proof locally in the browser and verifies it off-chain via your Backend Relayer.
+You can launch a centered OAuth-style popup window for face scanning and consent verification by calling `loginWithPopup()` or `registerWithPopup()`.
 
 ```typescript
-const handleLogin = async (webcamScreenshotBase64: string) => {
-  const result = await praman.login(
-    webcamScreenshotBase64,
-    null,          // No MetaMask signer required!
-    window.faceapi // Pass loaded faceapi instance
-  );
+import React, { useState } from 'react';
+import { initPraman } from '@praman/sdk';
 
-  if (result.success) {
-    console.log("Decentralized Session Token:", result.jwt);
-    console.log("ZK Proof details:", result.proof);
-    console.log("Is Mock Proof:", result.is_mock); // Flag representing proof authenticity
-    
-    // Send token to your backend server for verification!
-    const response = await fetch('/api/verify', {
-      method: 'POST',
-      body: JSON.stringify({ token: result.jwt }),
-      headers: { 'Content-Type': 'application/json' }
-    });
-    const authData = await response.json();
-    if (authData.valid) {
-      alert("Successfully Logged In!");
+// Initialize PramanAuth SDK
+const pramanAuth = initPraman({
+  apiKey: "pm_sandbox_test",
+  network: "polygon-amoy",
+  idpUrl: "https://auth.praman.network/authorize" // Standard hosted Identity Provider URL
+});
+
+export function App() {
+  const [user, setUser] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Opens a centered popup, handles the consent screen, and runs ZK face verification
+      const result = await pramanAuth.loginWithPopup({
+        scopes: ['email', 'profile'],
+      });
+
+      if (result.success) {
+        setUser(result.user);
+        console.log("Decentralized Session Token:", result.token);
+        console.log("ZK Proof details:", result.proof);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
     }
-  } else {
-    alert("Authentication failed: " + result.error);
-  }
-};
+  };
+
+  return (
+    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
+      <h2>PramanAuth Web3 Login</h2>
+      
+      {user ? (
+        <div>
+          <p><strong>DID Address:</strong> {user.did}</p>
+          {user.email && <p><strong>Email Address:</strong> {user.email}</p>}
+          <button onClick={() => setUser(null)}>Logout</button>
+        </div>
+      ) : (
+        <button onClick={handleLogin} disabled={loading}>
+          {loading ? 'Authenticating...' : 'Sign In with PramanAuth'}
+        </button>
+      )}
+
+      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+    </div>
+  );
+}
 ```
 
 ---
 
-## 3. Triggering Registration Flow
+## 3. Registering New Users
 
-During registration, gather user form data, scan their face, and invoke `register`. The relayer automatically pays the gas fees:
+If you want to onboard a new user, call `registerWithPopup()` with custom options. It displays the registration inputs and secures their credentials:
 
 ```typescript
-const handleRegister = async (webcamScreenshotBase64: string, pii: { name: string, email: string, mobile: string }) => {
-  const result = await praman.register(
-    webcamScreenshotBase64,
-    pii,
-    null, // No MetaMask signer required! Gas is sponsored by Relayer.
-    window.faceapi
-  );
-
-  if (result.success) {
-    console.log("Registered identity session JWT:", result.jwt);
-    alert("Biometric credentials registered gaslessly on-chain successfully!");
-  } else {
-    alert("Registration failed: " + result.error);
+const handleRegister = async () => {
+  try {
+    const result = await pramanAuth.registerWithPopup({
+      scopes: ['email', 'profile']
+    });
+    if (result.success) {
+      alert(`Successfully registered DID: ${result.user.did}`);
+    }
+  } catch (err: any) {
+    alert("Registration failed: " + err.message);
   }
 };
 ```

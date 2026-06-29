@@ -20,6 +20,14 @@ export function OnboardingFlow() {
     mobile: '',
   });
 
+  const [isPopupFlow, setIsPopupFlow] = useState(false);
+  const [clientApiKey, setClientApiKey] = useState<string | null>(null);
+
+  // Consent states
+  const [hasConsented, setHasConsented] = useState(false);
+  const [consentEmail, setConsentEmail] = useState(true);
+  const [consentProfile, setConsentProfile] = useState(true);
+
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
@@ -120,6 +128,29 @@ export function OnboardingFlow() {
     const params = new URLSearchParams(window.location.search);
     const url = params.get('redirectUrl');
     const token = params.get('handoverToken');
+    const modeParam = params.get('mode') as 'login' | 'register' | null;
+    const apiKeyParam = params.get('apiKey');
+    const scopesParam = params.get('scopes');
+
+    // Check if it is a popup flow (has opener or query params indicating OAuth)
+    const hasOpener = typeof window !== 'undefined' && !!window.opener;
+    const isOAuth = !!modeParam || !!apiKeyParam;
+
+    if (hasOpener || isOAuth) {
+      setIsPopupFlow(true);
+      if (modeParam === 'login' || modeParam === 'register') {
+        setAuthMode(modeParam);
+      }
+      if (apiKeyParam) {
+        setClientApiKey(apiKeyParam);
+      }
+      if (scopesParam) {
+        const scopes = scopesParam.split(',');
+        setConsentEmail(scopes.includes('email'));
+        setConsentProfile(scopes.includes('profile'));
+      }
+      addLog(`Popup-based verification flow detected. Mode: ${modeParam || 'register'}, Scopes: ${scopesParam || 'none'}`);
+    }
 
     if (token) {
       setHandoverUrlToken(token);
@@ -141,7 +172,9 @@ export function OnboardingFlow() {
       setRedirectUrl(url);
       addLog(`Redirect parameter detected: ${url}`);
     } else {
-      addLog('No redirect URL parameter detected. Running in Sandbox Mode.');
+      if (!hasOpener && !isOAuth) {
+        addLog('No redirect URL parameter detected. Running in Sandbox Mode.');
+      }
     }
   }, [addLog]);
 
@@ -370,6 +403,60 @@ export function OnboardingFlow() {
     }
   };
 
+  const handlePopupSuccess = (result: any) => {
+    if (!window.opener) {
+      addLog('Popup success handler active, but no parent window (window.opener) detected.');
+      return;
+    }
+
+    addLog('Authentication successful! Sending payload back to parent window...');
+    
+    // Standardized Firebase-style response
+    const payload = {
+      success: true,
+      user: {
+        did: walletAddress || result.faceDescriptorHash || '',
+        email: consentEmail ? (result.pii?.email || formData.email) : undefined,
+        verified: true
+      },
+      token: result.jwt || '',
+      proof: result.zkProof || zkProof || undefined
+    };
+
+    window.opener.postMessage({
+      type: 'PRAMAN_AUTH_SUCCESS',
+      payload
+    }, '*');
+
+    // Close the popup after a short delay so the user can see the success state
+    setTimeout(() => {
+      window.close();
+    }, 1500);
+  };
+
+  const handleCancel = () => {
+    if (window.opener) {
+      window.opener.postMessage({
+        type: 'PRAMAN_AUTH_ERROR',
+        error: 'Authentication cancelled by user.'
+      }, '*');
+      window.close();
+    } else {
+      addLog('Authentication cancelled.');
+    }
+  };
+
+  useEffect(() => {
+    if (sdkError && isPopupFlow) {
+      if (window.opener) {
+        window.opener.postMessage({
+          type: 'PRAMAN_AUTH_ERROR',
+          error: sdkError
+        }, '*');
+      }
+    }
+  }, [sdkError, isPopupFlow]);
+
   const captureAndAuthenticate = async () => {
     if (!webcamRef.current) {
       addLog('Webcam ref not ready.');
@@ -387,12 +474,17 @@ export function OnboardingFlow() {
       // Stop scanner camera stream UI
       setIsScanning(false);
       
+      let result = null;
       if (authMode === 'register') {
         addLog('Executing Registration flow...');
-        await scanAndRegister(formData, imageSrc);
+        result = await scanAndRegister(formData, imageSrc);
       } else {
         addLog('Executing Login flow (ZK Face Vector Matching)...');
-        await verifyAndLogin(imageSrc);
+        result = await verifyAndLogin(imageSrc);
+      }
+
+      if (result && isPopupFlow) {
+        handlePopupSuccess(result);
       }
     } catch (err: any) {
       addLog(`Capture failed: ${err.message}`);
@@ -456,12 +548,17 @@ export function OnboardingFlow() {
       setScreenshot(imageSrc);
       setIsScanning(false);
 
+      let result = null;
       if (authMode === 'register') {
         addLog('Executing Registration flow...');
-        await scanAndRegister(formData, imageSrc);
+        result = await scanAndRegister(formData, imageSrc);
       } else {
         addLog('Executing Login flow (ZK Face Vector Matching)...');
-        await verifyAndLogin(imageSrc);
+        result = await verifyAndLogin(imageSrc);
+      }
+
+      if (result && isPopupFlow) {
+        handlePopupSuccess(result);
       }
     } catch (err: any) {
       addLog(`Auto-authentication failed: ${err.message}`);
@@ -677,6 +774,122 @@ export function OnboardingFlow() {
         
         <div className="absolute top-0 right-0 w-48 h-48 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
+
+        {isPopupFlow && !hasConsented ? (
+          <div className="space-y-6 py-4">
+            <div className="text-center lg:text-left">
+              <span className="px-3 py-1 text-xs font-semibold tracking-widest text-purple-400 uppercase bg-purple-950/30 border border-purple-800/50 rounded-full">
+                Data Sharing Request
+              </span>
+              <h1 className="text-2xl font-bold tracking-tight text-white mt-4">
+                An application is requesting your Identity
+              </h1>
+              <p className="text-xs text-zinc-400 mt-2 font-mono">
+                Requested by: <span className="text-purple-400 font-semibold">{document.referrer ? new URL(document.referrer).host : 'Secure Client Application'}</span>
+                {clientApiKey && (
+                  <>
+                    <br />
+                    API Key: <span className="text-purple-405 font-semibold text-[10px]">{clientApiKey}</span>
+                  </>
+                )}
+              </p>
+            </div>
+
+            <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-900 pb-2">
+                Requested Permissions
+              </h3>
+              
+              {/* Permission Item 1: Mandatory Biometric ZK Proof */}
+              <div className="flex items-start justify-between gap-4 p-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-green-400 text-sm">🛡️</span>
+                    <span className="text-xs font-bold text-white">Biometric ZK Proof (Mandatory)</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed pl-6">
+                    Generates a zero-knowledge proof of facial metrics. Your raw biometric data is never shared.
+                  </p>
+                </div>
+                <div className="relative inline-flex items-center cursor-not-allowed">
+                  <input type="checkbox" checked disabled className="sr-only peer" />
+                  <div className="w-9 h-5 bg-purple-650 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600 opacity-60"></div>
+                </div>
+              </div>
+
+              {/* Permission Item 2: Email Address */}
+              <div className="flex items-start justify-between gap-4 p-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl hover:border-zinc-700/80 transition-colors">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-blue-400 text-sm">📧</span>
+                    <span className="text-xs font-bold text-white">Share Email Address</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed pl-6">
+                    Accesses your registered email address to verify account ownership.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentEmail}
+                    onChange={(e) => setConsentEmail(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-zinc-850 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                </label>
+              </div>
+
+              {/* Permission Item 3: Profile Info */}
+              <div className="flex items-start justify-between gap-4 p-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl hover:border-zinc-700/80 transition-colors">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-purple-400 text-sm">👤</span>
+                    <span className="text-xs font-bold text-white">Share Profile Information</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed pl-6">
+                    Accesses your full name and other profile details registered with Praman Network.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentProfile}
+                    onChange={(e) => setConsentProfile(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-9 h-5 bg-zinc-850 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="flex-1 py-3.5 text-xs font-bold uppercase border border-zinc-800 text-zinc-400 hover:bg-zinc-800/50 rounded-xl transition-all"
+              >
+                Reject &amp; Deny
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setHasConsented(true);
+                  addLog('User granted data permissions. Proceeding to identity verification...');
+                  
+                  // Automatically trigger wallet connection if not connected
+                  if (!walletAddress) {
+                    addLog('Automatically connecting wallet...');
+                    await connectWallet();
+                  }
+                }}
+                className="flex-1 py-3.5 text-xs font-bold uppercase bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-xl glow-purple transition-all"
+              >
+                Approve &amp; Continue
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
         
         <div className="mb-6 text-center lg:text-left">
           <span className="px-3 py-1 text-xs font-semibold tracking-widest text-purple-400 uppercase bg-purple-950/30 border border-purple-800/50 rounded-full">
@@ -1184,6 +1397,8 @@ export function OnboardingFlow() {
 
           </div>
         )}
+        </>
+      )}
       </div>
 
       {/* Diagnostic Logs Sidebar */}

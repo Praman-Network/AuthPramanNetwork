@@ -1,5 +1,5 @@
 export { initPraman, PramanClient, DEFAULT_RELAYER_URL } from './client';
-export type { PramanConfig, AuthResult, ProgressStepData, PramanErrorType } from './types';
+export type { PramanConfig, AuthResult, ProgressStepData, PramanErrorType, PopupOptions, PopupAuthResult } from './types';
 export { PramanErrors } from './types';
 export { quantizeFaceVector, hashFaceVector } from './biometrics';
 export { generateZKFaceProof } from './zkLayer';

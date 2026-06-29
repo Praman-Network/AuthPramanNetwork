@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import { PramanConfig, AuthResult } from './types';
+import { PramanConfig, AuthResult, PopupOptions, PopupAuthResult } from './types';
 import { quantizeFaceVector, hashFaceVector } from './biometrics';
 import { generateZKFaceProof } from './zkLayer';
 import { encryptPII, uploadToIPFS, getManualAuthSig, decryptPII, getPermissionAuthSig, fetchFromIPFS } from './storageLayer';
@@ -17,6 +17,7 @@ export class PramanClient {
   private backendUrl: string;
   private adminAddress: string;
   private livenessLevel: 'strict' | 'standard' | 'off';
+  private idpUrl: string;
 
   constructor(config: PramanConfig) {
     this.apiKey = config.apiKey;
@@ -24,6 +25,7 @@ export class PramanClient {
     this.webhookUrl = config.webhookUrl;
     this.backendUrl = config.backendUrl || DEFAULT_RELAYER_URL;
     this.adminAddress = config.adminAddress || '0x499B85172C9a228eaE3D7723223DFF062bFdFd4D';
+    this.idpUrl = config.idpUrl || 'https://auth.praman.network/authorize';
 
     // Normalize liveness level config
     if (config.livenessLevel) {
@@ -360,6 +362,7 @@ export class PramanClient {
 
       // 6. Decrypt profile name (optional) from encrypted storage
       let name: string | undefined = undefined;
+      let decryptedPII: any = undefined;
       try {
         const authSig = await getManualAuthSig(activeSigner);
         const decrypted = await decryptPII(
@@ -370,6 +373,7 @@ export class PramanClient {
           authSig
         );
         name = decrypted.name;
+        decryptedPII = decrypted;
       } catch (e) {
         console.warn('[PramanSDK] Failed to retrieve name during login, proceeding without it:', e);
       }
@@ -393,6 +397,7 @@ export class PramanClient {
         faceDescriptorHash: registeredHash,
         ipfsCid: registeredCid,
         is_mock: zkResult.is_mock,
+        pii: decryptedPII,
       };
     } catch (err: any) {
       const errMsg = err.message || 'SDK Login failed';
@@ -476,6 +481,91 @@ export class PramanClient {
       email: decrypted.email,
       mobile: decrypted.mobile,
     };
+  }
+
+  /**
+   * Internal helper to open the popup and handle window messaging.
+   */
+  private launchPopupFlow(mode: 'login' | 'register', options?: PopupOptions): Promise<PopupAuthResult> {
+    if (typeof window === 'undefined') {
+      return Promise.reject(new Error('[PramanSDK] Popup authentication is only supported in browser environments.'));
+    }
+
+    const width = options?.width || 500;
+    const height = options?.height || 700;
+    
+    // Center popup window
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+
+    const baseIdpUrl = options?.idpUrl || this.idpUrl;
+    
+    // Construct query parameters
+    const queryParams = new URLSearchParams({
+      mode,
+      apiKey: this.apiKey,
+      network: this.network,
+      backendUrl: this.backendUrl,
+      livenessLevel: this.livenessLevel,
+      adminAddress: this.adminAddress,
+    });
+    
+    if (options?.scopes && options.scopes.length > 0) {
+      queryParams.append('scopes', options.scopes.join(','));
+    }
+
+    const popupUrl = `${baseIdpUrl}?${queryParams.toString()}`;
+    const windowFeatures = `width=${width},height=${height},top=${top},left=${left},status=no,resizable=yes,scrollbars=yes`;
+
+    return new Promise<PopupAuthResult>((resolve, reject) => {
+      const popup = window.open(popupUrl, 'PramanAuthPopup', windowFeatures);
+
+      if (!popup) {
+        reject(new Error('Popup blocked. Please allow popups for this site.'));
+        return;
+      }
+
+      const messageListener = (event: MessageEvent) => {
+        const { data } = event;
+        
+        // Simple safety check: check structure of data
+        if (data && typeof data === 'object') {
+          if (data.type === 'PRAMAN_AUTH_SUCCESS') {
+            window.removeEventListener('message', messageListener);
+            clearInterval(closeCheckInterval);
+            resolve(data.payload as PopupAuthResult);
+          } else if (data.type === 'PRAMAN_AUTH_ERROR') {
+            window.removeEventListener('message', messageListener);
+            clearInterval(closeCheckInterval);
+            reject(new Error(data.error || 'Authentication failed.'));
+          }
+        }
+      };
+
+      window.addEventListener('message', messageListener);
+
+      const closeCheckInterval = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(closeCheckInterval);
+          window.removeEventListener('message', messageListener);
+          reject(new Error('User closed the verification window.'));
+        }
+      }, 1000);
+    });
+  }
+
+  /**
+   * Initiates a login flow inside a centered popup window.
+   */
+  public async loginWithPopup(options?: PopupOptions): Promise<PopupAuthResult> {
+    return this.launchPopupFlow('login', options);
+  }
+
+  /**
+   * Initiates a registration flow inside a centered popup window.
+   */
+  public async registerWithPopup(options?: PopupOptions): Promise<PopupAuthResult> {
+    return this.launchPopupFlow('register', options);
   }
 }
 

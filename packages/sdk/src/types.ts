@@ -6,6 +6,7 @@ export interface PramanConfig {
   backendUrl?: string;
   liveness?: boolean | 'strict' | 'standard' | 'off';
   livenessLevel?: 'strict' | 'standard' | 'off';
+  idpUrl?: string;
 }
 
 export interface AuthResult {
@@ -25,6 +26,24 @@ export interface AuthResult {
   is_mock?: boolean;
 }
 
+export interface PopupOptions {
+  idpUrl?: string;
+  scopes?: string[];
+  width?: number;
+  height?: number;
+}
+
+export interface PopupAuthResult {
+  success: boolean;
+  user: {
+    did: string;
+    email?: string;
+    verified: boolean;
+  };
+  token: string;
+  proof?: any;
+}
+
 export interface ProgressStepData {
   step: string;
   message: string;
@@ -37,4 +56,5 @@ export const PramanErrors = {
 } as const;
 
 export type PramanErrorType = typeof PramanErrors[keyof typeof PramanErrors];
+
 
