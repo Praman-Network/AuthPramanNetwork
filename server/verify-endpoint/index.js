@@ -71,7 +71,26 @@ async function uploadToIPFS(payload) {
 }
 
 const app = express();
-app.use(cors());
+const allowedOrigins = [
+  'https://auth.praman.network',
+  'http://localhost:5173',
+  'http://localhost:3000'
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    // Allow all origins in non-production environments to ease local development/testing
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS Not Allowed by PramanAuth Policy'), false);
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 /**
