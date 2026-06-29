@@ -5,18 +5,10 @@ export default defineConfig({
   format: ['cjs', 'esm'],
   dts: true,
   clean: true,
+  shims: true, // Shims wapas true kar do
   minify: false,
   sourcemap: true,
-  noExternal: ['tslib'], // Bundling tslib
-  
-  // FINAL FIX: Inject a dummy require function for browser environments
-  banner: {
-    js: `
-      import { createRequire as __createRequire } from 'module';
-      const require = (typeof window !== 'undefined') ? (() => {}) : __createRequire(import.meta.url);
-    `,
-  },
-  
+  noExternal: ['tslib'], 
   external: [
     'react',
     'ethers',
