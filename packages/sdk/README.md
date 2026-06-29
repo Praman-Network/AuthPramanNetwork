@@ -1,26 +1,37 @@
-# PramanAuth SDK Developer Documentation
+# @praman-network/sdk
 
-**Status:** 🧪 Beta | **Network:** Polygon Amoy (Testnet)
+[![npm version](https://img.shields.io/badge/npm-v0.1.2-blue.svg)](https://www.npmjs.com/package/@praman-network/sdk)
+[![Beta Status](https://img.shields.io/badge/status-beta-orange.svg)](#)
+[![Network](https://img.shields.io/badge/network-Polygon%20Amoy-purple.svg)](#)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
 
-Welcome to the PramanAuth SDK documentation. PramanAuth is a decentralized Identity-as-a-Service (IaaS) offering privacy-preserving, zero-knowledge (ZK) biometric authentication. 
-
-Under the new **Web2.5 Hybrid Relayer (BaaS)** architecture, transactions are gasless, there are no MetaMask popups for the user, and all IPFS uploads/contract writes are handled securely off-chain by our backend relayer.
+PramanAuth is a decentralized Identity-as-a-Service (IaaS) SDK that brings privacy-preserving, Zero-Knowledge (ZK) biometric authentication to Web3 applications. Under a hybrid Web2.5 Relayer architecture, users log in or register via a clean, popup-based consent and facial scan flow, entirely without paying gas fees or needing browser wallet confirmation popups.
 
 ---
 
-## Installation
+## Why PramanAuth?
 
-Add the SDK package to your frontend project:
+Modern authentication solutions force a trade-off between convenience and security. PramanAuth eliminates this compromise by combining high-fidelity biometrics with zero-knowledge cryptography:
+
+*   **Zero Biometric Storage:** We do not store raw images, video frames, or facial descriptors on any centralized server. Biometric matching templates are encrypted client-side using wallet signatures before being archived on IPFS.
+*   **Decentralized ZK-Verification:** Biometric verification is computed directly in the user's browser using client-side **Groth16 ZK-SNARK Proving (via SnarkJS)**. Only the zero-knowledge proof is sent to the blockchain, keeping raw biometrics completely private.
+*   **Gasless UX:** All blockchain writes, gas sponsorship, and storage interactions are delegated to our secure Backend Relayer. Users get a fast, seamless "Sign In with Google"-like experience.
+
+---
+
+## Quickstart
+
+### 1. Installation
+
+Install the core package in your React, Next.js, or Vite frontend application:
 
 ```bash
 npm install @praman-network/sdk
 ```
 
----
+### 2. Initialization
 
-## 1. Initialization
-
-Initialize the SDK instance inside your app config or root component (compatible with both Next.js and Vite). Pass the `backendUrl` of your Backend Relayer:
+Initialize the SDK instance inside your app config or root component. Pass your API key, preferred network, and production URLs:
 
 ```typescript
 import { initPraman } from '@praman-network/sdk';
@@ -28,22 +39,19 @@ import { initPraman } from '@praman-network/sdk';
 const praman = initPraman({
   apiKey: "YOUR_API_KEY",
   network: "polygon-amoy",
-  idpUrl: "https://auth.praman.network",   // Updated for production
-  backendUrl: "https://api.praman.network" // Updated for production
+  idpUrl: "https://auth.praman.network",   // Standard hosted Identity Provider URL
+  backendUrl: "https://api.praman.network" // Deployed Backend Relayer API URL
 });
 ```
 
----
+### 3. Triggering Popup Authentication (OAuth/Firebase Style)
 
-## 2. Triggering Popup Authentication (Firebase-style UX)
-
-You can launch a centered OAuth-style popup window for face scanning and consent verification by calling `loginWithPopup()` or `registerWithPopup()`.
+Call `loginWithPopup()` or `registerWithPopup()` to open a centered consent window that verifies the user and returns user claims and a decentralized JWT.
 
 ```typescript
 import React, { useState } from 'react';
 import { initPraman } from '@praman-network/sdk';
 
-// Initialize PramanAuth SDK
 const pramanAuth = initPraman({
   apiKey: "YOUR_API_KEY",
   network: "polygon-amoy",
@@ -60,15 +68,15 @@ export function App() {
     setLoading(true);
     setError(null);
     try {
-      // Opens a centered popup, handles the consent screen, and runs ZK face verification
+      // Launches centered popup, handles the consent screen, and runs ZK face verification
       const result = await pramanAuth.loginWithPopup({
         scopes: ['email', 'profile'],
       });
 
       if (result.success) {
         setUser(result.user);
-        console.log("Decentralized Session Token:", result.token);
-        console.log("ZK Proof details:", result.proof);
+        console.log("Session Token:", result.token);
+        console.log("ZK Proof Object:", result.proof);
       }
     } catch (err: any) {
       setError(err.message || 'Authentication failed');
@@ -78,32 +86,30 @@ export function App() {
   };
 
   return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
-      <h2>PramanAuth Web3 Login</h2>
+    <div style={{ padding: '24px', fontFamily: 'sans-serif' }}>
+      <h2>PramanAuth Web3 Sign-In</h2>
       
       {user ? (
         <div>
-          <p><strong>DID Address:</strong> {user.did}</p>
+          <p><strong>Decentralized ID (DID):</strong> {user.did}</p>
           {user.email && <p><strong>Email Address:</strong> {user.email}</p>}
           <button onClick={() => setUser(null)}>Logout</button>
         </div>
       ) : (
         <button onClick={handleLogin} disabled={loading}>
-          {loading ? 'Authenticating...' : 'Sign In with PramanAuth'}
+          {loading ? 'Opening Popup...' : 'Sign In with PramanAuth'}
         </button>
       )}
 
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+      {error && <p style={{ color: 'red', marginTop: '12px' }}>Error: {error}</p>}
     </div>
   );
 }
 ```
 
----
+### 4. Registration Flow
 
-## 3. Registering New Users
-
-If you want to onboard a new user, call `registerWithPopup()` with custom options. It displays the registration inputs and secures their credentials:
+Onboard new users to the smart contract using `registerWithPopup()`. This flow guides them through inputting optional details and performing their first biometric baseline scan:
 
 ```typescript
 const handleRegister = async () => {
@@ -112,7 +118,7 @@ const handleRegister = async () => {
       scopes: ['email', 'profile']
     });
     if (result.success) {
-      alert(`Successfully registered DID: ${result.user.did}`);
+      alert(`User registered successfully! DID: ${result.user.did}`);
     }
   } catch (err: any) {
     alert("Registration failed: " + err.message);
@@ -122,43 +128,107 @@ const handleRegister = async () => {
 
 ---
 
-## 4. Verifying Token (Client-Side & Backend)
+## Core Concepts
 
-### Client-Side Decrypt/Read
-You can quickly read and verify token contents in the client browser:
+PramanAuth operates on a privacy-first Web3 paradigm:
+
+```mermaid
+sequenceDiagram
+    participant User as Browser Client
+    participant IdP as Identity Provider (Popup)
+    participant Relayer as Backend Relayer
+    participant Chain as Smart Contract (Polygon)
+
+    User->>IdP: loginWithPopup() opens Consent
+    IdP->>User: Request Camera + Wallet access
+    User->>IdP: biometric scan + signature
+    Note over IdP: Round vector to 2 dec (getStableVector)<br/>Quantize & Hash (hashFaceVector)
+    IdP->>Relayer: Query user face CID
+    Relayer->>Chain: Read registered CID
+    Chain-->>Relayer: Return CID
+    Relayer-->>IdP: Return CID
+    Note over IdP: Generate local ZK-Proof<br/>comparing scanned & saved vectors
+    IdP->>Relayer: Send proof for verification
+    Relayer->>Chain: Verify ZK proof on-chain
+    Chain-->>Relayer: OK (valid proof)
+    Relayer-->>IdP: OK + Issue session token
+    IdP-->>User: postMessage(Token) + Close Popup
+```
+
+1.  **Face Vector Normalization & Hashing:** The face API generates a 128-dimensional array. The SDK runs it through `getStableVector()` (rounding to 2 decimals to eliminate scan/noise non-determinism) and hashes it with Keccak256.
+2.  **IPFS Pinned Enclaves:** User biographical fields are encrypted client-side using wallet signatures and lit protocol, then pinned as IPFS metadata.
+3.  **Local ZK Proving:** For login, the system downloads the encrypted reference vector, decrypts it locally, and generates a zero-knowledge Groth16 proof demonstrating that the Euclidean distance between the current face vector and the reference vector falls within strict liveness boundaries.
+
+---
+
+## Production Hardening
+
+### Environment Guard
+
+The PramanAuth SDK includes an **Environment Guard** that automatically determines when to run in strict mode.
+
+> [!WARNING]
+> In production environments (i.e. `process.env.NODE_ENV === 'production'` or `import.meta.env.MODE === 'production'`), the SDK enforces a strict **hard-fail** policy. If ZK proof generation fails due to memory exhaustion, network drops, or missing configuration assets, the login fails. Mock fallbacks are strictly disabled in production.
+
+### Backend Token Verification & Mock Filtering
+
+When your backend API receives the PramanAuth JWT token from the client, you must verify the signature and filter out mock identities.
+
+> [!IMPORTANT]
+> Always verify the `is_mock` claim in the decoded JWT payload. If `is_mock: true` is detected in a production build, your backend **must** reject the authentication session immediately to prevent bypass exploits.
 
 ```typescript
-const verifyTokenResult = praman.verifyToken(token);
-if (verifyTokenResult.valid) {
-  console.log("Authenticated User Wallet Address:", verifyTokenResult.payload.sub);
-  console.log("Is Mock Token:", verifyTokenResult.payload.is_mock);
+import { verifyToken } from '@praman-network/sdk'; // On Node.js backends
+
+const result = verifyToken(receivedToken);
+if (!result.valid) {
+  throw new Error("Invalid cryptographic session token");
+}
+
+if (result.payload.is_mock && process.env.NODE_ENV === 'production') {
+  throw new Error("Unauthorized: Mock tokens are restricted in production environments");
 }
 ```
 
-### Backend Integration
-When your backend receives the token from the client, it must decrypt and verify it.
+---
 
-> [!IMPORTANT]
-> **Mandatory Security Rule:** Always check the `is_mock` flag in the decoded token payload on your backend. If `is_mock` is `true` in a production environment, the authentication transaction **MUST** be rejected to prevent mock-bypass exploits.
+## Developer Experience & Troubleshooting
+
+### Common Troubleshooting
+
+#### 1. Why does my registration fail with "Biometric face identity already registered"?
+This occurs because the contract's unique Sybil check detected that your face descriptor hash is already associated with an existing master wallet. During development, you can use the `is_mock` config flags or clear state from the deployed smart contract.
+
+#### 2. CORS Errors connecting to Backend Relayer
+Ensure your deployed verify-endpoint backend has set the proper allowed CORS origin. In production mode, wildcards (`*`) are disabled, and the relayer restricts requests to authorized domains (e.g. `https://auth.praman.network`).
+
+#### 3. ZK Proof Generation takes too long or crashes the browser
+Ensure that your development build is not bottlenecked by heavy source-map generations. If building for mobile or resource-constrained devices, verify that WebAssembly support is fully enabled in the target browser environment.
 
 ---
 
-## Security Best Practices
+## Changelog
 
-### Production Hardening & Environment Guard
-The PramanAuth SDK is production-hardened to prevent development simulation tools from leaking into live deployments.
-
-> [!WARNING]
-> **Environment Guard:** In production mode, the SDK enforces a strict **hard-fail** policy. If real ZK proof generation fails (due to missing static files like `.wasm`/`.zkey`, or browser resource exhaustion), it will throw a critical error rather than falling back to a mock proof. 
-
-Ensure that your production bundler config or environment variable (`import.meta.env.MODE` for Vite or `process.env.NODE_ENV` for Node environments) is correctly set to `'production'` in your deployed builds.
+*   **`v0.1.3` (Planned Release)**
+    *   Optimized `getStableVector` normalizer layer inside biometrics engine.
+*   **`v0.1.2` (Current)**
+    *   Added dynamic `idpUrl` and `backendUrl` config bindings for production environments.
+*   **`v0.1.1`**
+    *   Implemented popup-based OAuth Consent screens and window-opener message listeners.
+*   **`v0.1.0`**
+    *   Initial release of basic face scanning, Lit protocol encryption, and gasless transaction relayers.
 
 ---
 
-## Privacy, Sovereignty & Zero-Knowledge Verification
+## Get Involved
 
-PramanAuth is designed around user sovereignty and mathematical trust, ensuring that biometrics can be verified without sacrificing privacy.
+PramanAuth is open-source. Help us build a safer, passwordless, decentralized future for Web3 applications:
 
-*   **Zero Biometric Storage:** We do not store raw biometric data (such as images, photos, or raw face descriptors) on any centralized server or database.
-*   **Decentralized Verification:** 128-dimensional quantized face vectors are converted into a Keccak256 hash. The actual mathematical verification is performed locally inside the user's browser using client-side ZK-SNARK Proving (via Groth16 SnarkJS).
-*   **Cryptographic Verifiability:** Since only the zero-knowledge proof is sent for verification, your servers and the public ledger never gain visibility of the user's raw face measurements. Trust is mathematically guaranteed.
+*   **GitHub Repository:** [Praman-Network/AuthPramanNetwork](https://github.com/Praman-Network/AuthPramanNetwork)
+*   **Contribute:** Submit pull requests or open feature requests in our GitHub issues.
+*   **Support:** Reach out to the core engineering team for API keys and developer support.
+
+---
+
+### Keywords
+`["web3", "authentication", "zk-snark", "identity", "biometric", "passwordless", "polygon", "decentralized-auth"]`
