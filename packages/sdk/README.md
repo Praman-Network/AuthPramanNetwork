@@ -209,9 +209,8 @@ Ensure that your development build is not bottlenecked by heavy source-map gener
 
 ## Changelog
 
-*   **`v0.1.3` (Planned Release)**
-    *   Optimized `getStableVector` normalizer layer inside biometrics engine.
 *   **`v0.1.2` (Current)**
+    *   Implemented `getStableVector` normalization layer inside biometrics engine to stabilize face descriptor hashes.
     *   Added dynamic `idpUrl` and `backendUrl` config bindings for production environments.
 *   **`v0.1.1`**
     *   Implemented popup-based OAuth Consent screens and window-opener message listeners.
