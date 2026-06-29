@@ -8,6 +8,10 @@ export default defineConfig({
   shims: true,
   minify: false,
   sourcemap: true,
+  // Fix: Bundling tslib inside so it doesn't try to require() it
+  noExternal: ['tslib'], 
+  // Fix: Better CJS interop
+  cjsInterop: true, 
   external: [
     'react',
     'ethers',
