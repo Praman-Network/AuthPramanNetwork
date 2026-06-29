@@ -1,45 +1,66 @@
-# PramanAuth Network
+# PramanNetwork Authentication Workspace
 
-**Status:** 🧪 Beta | **Network:** Polygon Amoy (Testnet)
+**Status:** 🧪 Beta | **Ecosystem Network:** Polygon Amoy (Testnet)
 
-PramanAuth is a **Web2.5 Hybrid Relayer (BaaS)** platform offering gasless, privacy-preserving zero-knowledge (ZK) biometric authentication. It enables trustless identity validation on applications with **zero gas fees for end-users, no MetaMask popups, and secure backend-managed keys.**
+PramanAuth is a **Web2.5 Hybrid Relayer (BaaS)** platform offering gasless, privacy-preserving zero-knowledge (ZK) biometric authentication. It enables trustless identity validation on client applications with **zero gas fees for end-users, no browser wallet popups, and secure backend-managed keys.**
 
 ---
 
-## Project Repository Architecture
+## Monorepo Workspace Overview
 
-This is a monorepo containing all components of the PramanAuth network:
+This repository is managed as a Turborepo monorepo:
 
-*   **[`packages/sdk`](file:///Users/rahulchaudhary/pramanauth/packages/sdk)**: The core PramanAuth TypeScript/React SDK. Handles local biometric scanning, liveness detection, and client-side ZK-Proof generation.
-*   **[`apps/identity-provider`](file:///Users/rahulchaudhary/pramanauth/apps/identity-provider)**: Client-facing React/Vite Identity Provider application.
-*   **[`server/verify-endpoint`](file:///Users/rahulchaudhary/pramanauth/server/verify-endpoint)**: Backend Relayer service. Handles Pinata IPFS uploads, pays transaction gas on Polygon Amoy, and verifies ZK proofs off-chain.
+*   **[`packages/sdk`](file:///Users/rahulchaudhary/pramanauth/packages/sdk)**: Client Interface SDK. Handles local biometric scanning, liveness detection, and client-side ZK-Proof generation.
+*   **[`apps/web`](file:///Users/rahulchaudhary/apps/web)**: Developer Dashboard managing API Keys, Origin Whitelists, and integration usage analytics. (Referred to as `apps/identity-provider` in staging/sandbox deployments).
+*   **[`apps/auth`](file:///Users/rahulchaudhary/pramannetworkhome/apps/auth)**: Security Relayer service. Express backend microservice running on port `5050` that handles Pinata IPFS uploads, pays transaction gas on Polygon Amoy, and verifies ZK proofs off-chain.
 *   **[`circuits`](file:///Users/rahulchaudhary/pramanauth/circuits)**: Circom zero-knowledge matching circuits (`face_verify.circom`).
 *   **[`contracts`](file:///Users/rahulchaudhary/pramanauth/contracts)**: Solidity smart contracts (`FaceRegistry.sol`).
 
 ---
 
-## SDK Integration Guide (Gasless Web2.5)
+## Monorepo Setup & Local Contribution
+
+### Prerequisites
+Make sure Node.js (v18+) and npm are installed globally.
+
+### Setup and Build Workflow
+
+**1. Install all dependencies across the monorepo:**
+```bash
+npm install
+```
+
+**2. Build all packages and applications in the monorepo concurrently (Turborepo):**
+```bash
+npm run build
+```
+
+**3. Run the development environment (starts all services):**
+```bash
+npm run dev
+```
+
+---
+
+## SDK Integration Guide
 
 ### Installation
 
-Add the SDK package to your frontend project:
+Install the SDK package and `tslib` (peer dependency for helper resolution) in your frontend application:
 
 ```bash
-npm install @praman-network/sdk
+npm install @praman-network/sdk tslib
 ```
 
 ### Setup with Vite (React / Vue)
-
-If you are using Vite, you might encounter errors like `global is not defined` or `Buffer is not defined`. This happens because Web3 libraries rely on Node.js built-ins. 
-
-To fix this, simply add Node polyfills to your Vite project:
+Vite requires polyfills to resolve Node.js variables:
 
 **1. Install the polyfill plugin:**
 ```bash
 npm install vite-plugin-node-polyfills --save-dev
 ```
 
-**2. Update your `vite.config.js` or `vite.config.ts`:**
+**2. Update `vite.config.ts`:**
 ```javascript
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -59,143 +80,123 @@ export default defineConfig({
 });
 ```
 
-### 1. Initialization
+### SDK Initialization
 
-Initialize the SDK instance inside your app config or root component. Pass the Backend Relayer URL so that the SDK can delegate blockchain transactions and storage uploads:
+Initialize the SDK singleton.
+
+#### Option 1: Simple Initialization (Production Defaults)
+Suitable for live integrations pointing to the production relayer (`https://api.praman.network`):
+
+```typescript
+import { initPraman } from '@praman-network/sdk';
+
+const praman = initPraman("pm_live_your_api_key");
+```
+
+#### Option 2: Custom Configuration (Testing/Sandbox)
+Configure options for local development connecting to the `apps/auth` backend service (running on port `5050`):
 
 ```typescript
 import { initPraman } from '@praman-network/sdk';
 
 const praman = initPraman({
-  apiKey: "YOUR_API_KEY",
+  apiKey: "pm_dev_your_api_key",
   network: "polygon-amoy",
-  idpUrl: "https://auth.praman.network",   // Updated for production
-  backendUrl: "https://api.praman.network" // Updated for production
+  backendUrl: "http://localhost:5050", // Custom microservice URL
+  livenessLevel: "standard"
 });
 ```
 
-### 2. Triggering Popup Authentication (Firebase-style UX)
+---
 
-You can launch a centered OAuth-style popup window for face scanning and consent verification by calling `loginWithPopup()` or `registerWithPopup()`.
+## Framework Support
+
+The SDK supports various architectural setups:
+
+### 1. Next.js (App Router)
+For Next.js implementations, restrict components interacting with the SDK to client boundaries using `'use client'`:
 
 ```typescript
-import React, { useState } from 'react';
+'use client';
+
+import React from 'react';
 import { initPraman } from '@praman-network/sdk';
 
-// Initialize PramanAuth SDK
-const pramanAuth = initPraman({
-  apiKey: "YOUR_API_KEY",
-  network: "polygon-amoy",
-  idpUrl: "https://auth.praman.network",
-  backendUrl: "https://api.praman.network"
-});
+const praman = initPraman(
+  process.env.NEXT_PUBLIC_PRAMAN_API_KEY || '',
+  process.env.NEXT_PUBLIC_PRAMAN_BACKEND_URL
+);
 
-export function App() {
-  const [user, setUser] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleLogin = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // Opens a centered popup, handles the consent screen, and runs ZK face verification
-      const result = await pramanAuth.loginWithPopup({
-        scopes: ['email', 'profile'],
-      });
-
-      if (result.success) {
-        setUser(result.user);
-        console.log("Decentralized Session Token:", result.token);
-        console.log("ZK Proof details:", result.proof);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Authentication failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div style={{ padding: '20px', fontFamily: 'sans-serif' }}>
-      <h2>PramanAuth Web3 Login</h2>
-      
-      {user ? (
-        <div>
-          <p><strong>DID Address:</strong> {user.did}</p>
-          {user.email && <p><strong>Email Address:</strong> {user.email}</p>}
-          <button onClick={() => setUser(null)}>Logout</button>
-        </div>
-      ) : (
-        <button onClick={handleLogin} disabled={loading}>
-          {loading ? 'Authenticating...' : 'Sign In with PramanAuth'}
-        </button>
-      )}
-
-      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
-    </div>
-  );
+export default function LoginPage() {
+  return <button onClick={() => praman.loginWithPopup()}>Authenticate</button>;
 }
 ```
 
-### 3. Registering New Users
+### 2. Generic Single Page Apps (SPA) / Vanilla JS
+Import from the CommonJS or ES build module directly:
 
-If you want to onboard a new user, call `registerWithPopup()` with custom options. It displays the registration inputs and secures their credentials:
+```javascript
+import { initPraman, verifyZKProof } from '@praman-network/sdk';
 
-```typescript
-const handleRegister = async () => {
-  try {
-    const result = await pramanAuth.registerWithPopup({
-      scopes: ['email', 'profile']
-    });
-    if (result.success) {
-      alert(`Successfully registered DID: ${result.user.did}`);
-    }
-  } catch (err: any) {
-    alert("Registration failed: " + err.message);
+initPraman("pm_dev_key", "http://localhost:5050");
+
+async function handleVerification(address, proof, signals) {
+  const response = await verifyZKProof(address, proof, signals);
+  if (response.success) {
+    console.log("Verified successfully!");
   }
-};
-```
-
----
-
-## Verification & Backend Integration
-
-### Client-Side Decrypt/Read
-You can quickly read and verify token contents in the client browser:
-
-```typescript
-const verifyTokenResult = praman.verifyToken(token);
-if (verifyTokenResult.valid) {
-  console.log("Authenticated User Wallet Address:", verifyTokenResult.payload.sub);
-  console.log("Is Mock Token:", verifyTokenResult.payload.is_mock);
 }
 ```
 
-### Backend Integration
-When your backend receives the token from the client, it must decrypt and verify it.
+---
 
-> [!IMPORTANT]
-> **Mandatory Security Rule:** Always check the `is_mock` flag in the decoded token payload on your backend. If `is_mock` is `true` in a production environment, the authentication transaction **MUST** be rejected to prevent mock-bypass exploits.
+## Security Architecture ("Security First")
+
+PramanAuth implements a multi-tier security architecture to protect verification channels from sybil and spoofing exploits:
+
+1.  **API Key Validation (`x-api-key`):** The client SDK passes the API Key in the headers on all API requests. The relayer compares the key against active records in our metadata registry.
+2.  **Origin Whitelisting:** The relayer validates incoming headers (`origin` and `referer`) against allowed domains. Unrecognized request origins are blocked to prevent unauthorized reuse of API keys.
+3.  **Rate Limiting:** The relayer implements rate-limiting policies to prevent brute-force proving submissions and denial of service.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Developer App (Browser)
+    participant SDK as Praman Client SDK
+    participant Relayer as Security Relayer (apps/auth)
+    participant Contract as FaceRegistry (Polygon)
+
+    App->>SDK: initPraman(apiKey, [backendUrl])
+    App->>SDK: verifyZKProof(userAddress, proof, publicSignals)
+    Note over SDK: Retrieve stored apiKey & backendUrl
+    SDK->>Relayer: POST /api/v1/verify-zk<br/>Headers: { x-api-key, origin }
+    Note over Relayer: verifyApiKey & verifyOrigin Middleware<br/>Validate API Key & Origin whitelist
+    Relayer->>Contract: Validate ZK signals & state
+    Contract-->>Relayer: On-chain Registry Status
+    Relayer-->>SDK: Return JSON Result (success: true)
+    SDK-->>App: Resolve verification response
+```
 
 ---
 
-## Security Best Practices
+## Verification & Production Hardening
 
-### Production Hardening & Environment Guard
-The PramanAuth SDK is production-hardened to prevent development simulation tools from leaking into live deployments.
+### Environment Guard
+The SDK contains an automated **Environment Guard** that monitors execution modes.
 
 > [!WARNING]
-> **Environment Guard:** In production mode, the SDK enforces a strict **hard-fail** policy. If real ZK proof generation fails (due to missing static files like `.wasm`/`.zkey`, or browser resource exhaustion), it will throw a critical error rather than falling back to a mock proof. 
-> 
-> Ensure that your production bundler config or environment variable (`import.meta.env.MODE` for Vite or `process.env.NODE_ENV` for Node environments) is correctly set to `'production'` in your deployed builds.
+> **Environment Strict Mode:** In production builds (`process.env.NODE_ENV === 'production'` or `import.meta.env.MODE === 'production'`), the SDK enforces a strict, hard-fail security policy. If ZK proof generation fails due to browser memory limits, asset delivery problems, or system timeouts, authentication fails immediately. Mock proofs are strictly rejected in production.
+
+### Backend Token Filtering
+When integrating PramanAuth within your own server backend, always inspect and filter claims:
+
+> [!IMPORTANT]
+> **Mock Token Filter:** Always check the `is_mock` flag in the decoded JWT payload on your backend. If `is_mock: true` is detected in a production build, your backend **must** reject the authentication session immediately to prevent mock-bypass exploits.
 
 ---
 
-## Privacy, Sovereignty & Zero-Knowledge Verification
+## Zero-Knowledge Privacy & Sovereignty
 
-PramanAuth is designed around user sovereignty and mathematical trust, ensuring that biometrics can be verified without sacrificing privacy.
-
-*   **Zero Biometric Storage:** We do not store raw biometric data (such as images, photos, or raw face descriptors) on any centralized server or database.
-*   **Decentralized Verification:** 128-dimensional quantized face vectors are converted into a Keccak256 hash. The actual mathematical verification is performed locally inside the user's browser using client-side ZK-SNARK Proving (via Groth16 SnarkJS).
-*   **Cryptographic Verifiability:** Since only the zero-knowledge proof is sent for verification, your servers and the public ledger never gain visibility of the user's raw face measurements. Trust is mathematically guaranteed.
+*   **Zero Biometric Storage:** PramanAuth does not store raw biometric data (such as photos, video feeds, or raw face descriptors) on any centralized server.
+*   **Decentralized Verification:** 128-dimensional quantized face vectors are Keccak256 hashed. Comparisons are computed locally inside the user's browser using Groth16 SnarkJS provers.
+*   **Decentralized Identity:** Trust is mathematically guaranteed without revealing user biometric templates.

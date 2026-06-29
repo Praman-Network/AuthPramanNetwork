@@ -504,6 +504,51 @@ export class PramanClient {
   }
 
   /**
+   * Sends the ZK proof/user data to the backend.
+   */
+  public async verifyZKProof(
+    userAddress: string,
+    zkProof: any,
+    publicSignals: any[],
+    is_mock?: boolean
+  ): Promise<any> {
+    const url = `${this.backendUrl}/api/v1/verify-zk`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.apiKey,
+      },
+      body: JSON.stringify({
+        userAddress,
+        zkProof,
+        publicSignals,
+        is_mock,
+      }),
+    });
+
+    if (!response.ok) {
+      let errorMsg = 'Backend verification failed';
+      let errorCode = 'UNKNOWN_ERROR';
+      try {
+        const errorJson = await response.json();
+        errorMsg = errorJson.message || errorJson.error || errorMsg;
+        errorCode = errorJson.error_code || errorCode;
+      } catch (e) {
+        try {
+          const text = await response.text();
+          errorMsg = text || errorMsg;
+        } catch (_) {}
+      }
+      const err = new Error(`[${errorCode}] ${errorMsg}`);
+      (err as any).error_code = errorCode;
+      throw err;
+    }
+
+    return response.json();
+  }
+
+  /**
    * Internal helper to open the popup and handle window messaging.
    */
   private launchPopupFlow(mode: 'login' | 'register', options?: PopupOptions): Promise<PopupAuthResult> {
@@ -592,9 +637,31 @@ export class PramanClient {
 /**
  * Initializes standard Praman SDK client.
  */
-export function initPraman(config: PramanConfig): PramanClient {
+export function initPraman(
+  configOrApiKey: PramanConfig | string,
+  backendUrl?: string
+): PramanClient {
   if (!globalClientInstance) {
+    const config = typeof configOrApiKey === 'string' 
+      ? {
+          apiKey: configOrApiKey,
+          network: 'polygon-amoy',
+          // Agar backendUrl nahi diya, toh production URL use karo
+          backendUrl: backendUrl || 'https://api.praman.network', 
+        }
+      : configOrApiKey;
+
     globalClientInstance = new PramanClient(config);
+  }
+  return globalClientInstance;
+}
+
+/**
+ * Gets the active standard Praman SDK client instance.
+ */
+export function getPramanClient(): PramanClient {
+  if (!globalClientInstance) {
+    throw new Error('[PramanSDK] SDK not initialized. Call initPraman first.');
   }
   return globalClientInstance;
 }
