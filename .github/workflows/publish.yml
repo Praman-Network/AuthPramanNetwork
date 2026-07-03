@@ -34,5 +34,4 @@ jobs:
       - name: Publish to NPM with Provenance
         working-directory: ./packages/sdk
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
