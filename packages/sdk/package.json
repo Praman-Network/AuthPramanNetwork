@@ -1,6 +1,6 @@
 {
   "name": "@praman-network/sdk",
-  "version": "0.1.10",
+  "version": "0.1.13",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -41,6 +41,13 @@
     "tsup": "^8.0.2",
     "typescript": "^5.0.0"
   },
+"repository": {
+  "type": "git",
+  "url": "git+https://github.com/Praman-Network/AuthPramanNetwork"
+},
+
+
+
   "files": [
     "dist",
     "README.md",

@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # @praman-network/sdk
 
-[![npm version](https://img.shields.io/badge/npm-v0.1.11-blue.svg)](https://www.npmjs.com/package/@praman-network/sdk)
+[![npm version](https://img.shields.io/badge/npm-v0.1.10-blue.svg)](https://www.npmjs.com/package/@praman-network/sdk)
 [![Beta Status](https://img.shields.io/badge/status-beta-orange.svg)](#)
 [![Network](https://img.shields.io/badge/network-Polygon%20Amoy-purple.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
@@ -233,7 +233,7 @@ Ensure that WebAssembly support is enabled in the target browser environment. We
 
 ## Changelog
 
-*   **`v0.1.11` (Current)**
+*   **`v0.1.10` (Current)**
     *   Added support for direct API key verification headers and custom backend relay routing.
     *   Implemented standalone `verifyZKProof` and `loginWithPraman` exports.
     *   Moved `tslib` to peerDependencies.
