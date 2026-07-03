@@ -1,9 +1,3 @@
----
-title: SDK Reference
-sidebar_label: SDK Reference
-sidebar_position: 3
----
-
 # @praman-network/sdk
 
 [![npm version](https://img.shields.io/badge/npm-v0.1.10-blue.svg)](https://www.npmjs.com/package/@praman-network/sdk)
