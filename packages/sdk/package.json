@@ -1,7 +1,8 @@
 {
   "name": "@praman-network/sdk",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "license": "MIT",
+  "homepage": "https://docs.praman.network/",
   "type": "module",
   "keywords": [
     "web3",
