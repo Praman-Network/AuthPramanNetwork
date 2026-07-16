@@ -1,6 +1,6 @@
 {
   "name": "@praman-network/sdk",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "license": "MIT",
   "homepage": "https://docs.praman.network/",
   "type": "module",
