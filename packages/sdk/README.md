@@ -167,24 +167,16 @@ To protect the verification relay against Sybil attacks and credential leaks, co
 1.  **API Key Validation (`x-api-key`):** The SDK automatically transmits your configured API key in the request headers on all verification API calls.
 2.  **Origin Whitelisting:** The security relayer checks incoming request headers (`origin` and `referer`). Requests from non-whitelisted domains are strictly rejected by the backend to prevent API key usage outside authorized apps.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant App as Developer App (Browser)
-    participant SDK as Praman Client SDK
-    participant Relayer as Security Relayer (apps/auth)
-    participant Contract as FaceRegistry (Polygon)
-
-    App->>SDK: initPraman(apiKey, [backendUrl])
-    App->>SDK: verifyZKProof(userAddress, proof, publicSignals)
-    Note over SDK: Retrieve stored apiKey & backendUrl
-    SDK->>Relayer: POST /api/v1/verify-zk<br/>Headers: { x-api-key, origin }
-    Note over Relayer: verifyApiKey & verifyOrigin Middleware<br/>Validate API Key & Origin whitelist
-    Relayer->>Contract: Validate ZK signals & state
-    Contract-->>Relayer: On-chain Registry Status
-    Relayer-->>SDK: Return JSON Result (success: true)
-    SDK-->>App: Resolve verification response
-```
+**Verification Flow (Text Outline):**
+1. **Developer App (Browser)** initializes SDK: `initPraman(apiKey)`
+2. **Developer App** requests verification: `verifyZKProof(userAddress, proof, publicSignals)`
+3. **Praman SDK** retrieves stored API key and Backend URL.
+4. **Praman SDK** sends `POST /api/v1/verify-zk` with Headers: `{ x-api-key, origin }` to the **Security Relayer**.
+5. **Security Relayer** middleware (`verifyApiKey` & `verifyOrigin`) validates the request.
+6. **Security Relayer** checks ZK signals & state against the **FaceRegistry Smart Contract** on Polygon.
+7. **FaceRegistry** returns the on-chain status.
+8. **Security Relayer** sends JSON result (`success: true`) back to the **SDK**.
+9. **SDK** resolves the verification response for the **Developer App**.
 
 ---
 

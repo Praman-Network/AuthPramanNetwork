@@ -20,16 +20,20 @@ PramanAuth is a decentralized Identity-as-a-Service (IaaS) SDK providing privacy
 Modern authentication solutions force a trade-off between user convenience and security. PramanAuth bridges this gap by combining decentralized biometrics with zero-knowledge proofs.
 
 ### 🌟 What's New in Version 2.0
-*   **Strict Sybil Resistance:** Decreased face vector variance bounds to enforce a strict **1-User = 1-Account** mapping, effectively blocking multi-account Sybil exploits on-chain.
+*   **Web2.5 Hybrid Auth (Email OTP + Embedded Wallets):** Fully integrated with `@privy-io/react-auth`. Users can now onboard seamlessly using just an Email address. An embedded non-custodial wallet is automatically provisioned behind the scenes—no seed phrases, no MetaMask required to get started.
+*   **Progressive Web3 Account Linking:** A dedicated Security Dashboard allows users to start as Web2 natives (Email) and later link their existing Web3 hardware wallets or MetaMask accounts to the *same* biometric identity.
+*   **Strict Sybil Resistance:** Decreased face vector variance bounds to enforce a strict **1-User = 1-Account** mapping, effectively blocking multi-account Sybil exploits on-chain regardless of whether the user logs in via Email or MetaMask.
 *   **Dynamic Face Alignment UX:** Implemented real-time visual feedback (Red/Green frame tracking) ensuring perfect facial alignment before Groth16 ZK-Proof processing begins.
-*   **Progressive Account Linking:** An integrated Security Dashboard that allows users to seamlessly link their MetaMask / hardware wallets directly to their existing Email-based Embedded wallets.
 *   **In-App Identity Recovery:** A native, on-platform support dashboard for resolving KYC/identity loss due to lost hardware access or facial alterations (accidents/surgery).
 *   **Cyberpunk Cyan Theme:** A fully overhauled visual identity matching the Praman brand, replacing the legacy purple gradients with a vibrant neon Cyan/Teal aesthetic.
 
-### Core Architecture
-*   **Zero Biometric Leakage:** No raw biometric data (images, videos, or raw face descriptors) is ever sent to or stored on any centralized server. Biometric templates are quantized, hashed, and encrypted client-side using wallet signatures before being archived on IPFS.
-*   **Browser-Side ZK Verification:** Biometric comparisons are computed locally in the user's browser using client-side **Groth16 ZK-SNARK Proving (via SnarkJS)**. Raw biometrics remain completely private, and only the ZK proof is dispatched for verification.
-*   **Gasless User Experience:** All blockchain writes, gas sponsorship, and IPFS pinning are managed securely by the Backend Relayer. Users get a fast, signature-based sign-in experience with zero transaction costs.
+### Core Architecture & The Web2.5 Flow
+PramanAuth bridges the Web2 user experience with Web3 cryptography:
+1. **Frictionless Entry (Privy):** User requests an OTP to their email. Upon verification, an embedded EVM wallet is generated invisibly.
+2. **Biometric Anchoring (Praman ZK):** The user scans their face. The face descriptor is mapped uniquely to the embedded wallet. 
+3. **Zero Biometric Leakage:** No raw biometric data (images, videos, or raw face descriptors) is ever sent to or stored on any centralized server. Biometric templates are quantized, hashed, and encrypted client-side using wallet signatures before being archived on IPFS.
+4. **Browser-Side ZK Verification:** Biometric comparisons are computed locally in the user's browser using client-side **Groth16 ZK-SNARK Proving (via SnarkJS)**. Raw biometrics remain completely private, and only the ZK proof is dispatched for verification.
+5. **Gasless User Experience:** All blockchain writes, gas sponsorship, and IPFS pinning are managed securely by the Backend Relayer. Users get a fast, signature-based sign-in experience with zero transaction costs.
 
 ---
 
