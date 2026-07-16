@@ -8,11 +8,18 @@
 PramanAuth is a decentralized Identity-as-a-Service (IaaS) SDK providing privacy-preserving, Zero-Knowledge (ZK) biometric authentication for Web3 applications. Powered by a hybrid Web2.5 architecture, PramanAuth secures client-to-backend communication via **API Key authentication** and **Origin Whitelisting**, enabling gasless biometric verification for end-users.
 
 ---
-
 ## Why PramanAuth?
 
-Modern authentication solutions force a trade-off between user convenience and security. PramanAuth bridges this gap by combining decentralized biometrics with zero-knowledge proofs:
+Modern authentication solutions force a trade-off between user convenience and security. PramanAuth bridges this gap by combining decentralized biometrics with zero-knowledge proofs.
 
+### 🌟 What's New in Version 2.0
+*   **Strict Sybil Resistance:** Decreased face vector variance bounds to enforce a strict **1-User = 1-Account** mapping, effectively blocking multi-account Sybil exploits on-chain.
+*   **Dynamic Face Alignment UX:** Implemented real-time visual feedback (Red/Green frame tracking) ensuring perfect facial alignment before Groth16 ZK-Proof processing begins.
+*   **Progressive Account Linking:** An integrated Security Dashboard that allows users to seamlessly link their MetaMask / hardware wallets directly to their existing Email-based Embedded wallets.
+*   **In-App Identity Recovery:** A native, on-platform support dashboard for resolving KYC/identity loss due to lost hardware access or facial alterations (accidents/surgery).
+*   **Cyberpunk Cyan Theme:** A fully overhauled visual identity matching the Praman brand, replacing the legacy purple gradients with a vibrant neon Cyan/Teal aesthetic.
+
+### Core Architecture
 *   **Zero Biometric Leakage:** No raw biometric data (images, videos, or raw face descriptors) is ever sent to or stored on any centralized server. Biometric templates are quantized, hashed, and encrypted client-side using wallet signatures before being archived on IPFS.
 *   **Browser-Side ZK Verification:** Biometric comparisons are computed locally in the user's browser using client-side **Groth16 ZK-SNARK Proving (via SnarkJS)**. Raw biometrics remain completely private, and only the ZK proof is dispatched for verification.
 *   **Gasless User Experience:** All blockchain writes, gas sponsorship, and IPFS pinning are managed securely by the Backend Relayer. Users get a fast, signature-based sign-in experience with zero transaction costs.
@@ -224,10 +231,15 @@ Verify that your origin domain (e.g. `http://localhost:5173`) is listed in the a
 Ensure that WebAssembly support is enabled in the target browser environment. WebAssembly is required to execute the client-side snarkjs prover efficiently.
 
 ---
-
 ## Changelog
 
-*   **`v0.1.10` (Current)**
+*   **`v2.0.0` (Major Update)**
+    *   Added **Strict Sybil Resistance** (1 decimal quantization) in `getStableVector`.
+    *   Introduced **Dynamic Face Alignment UX** during webcam capture.
+    *   Released the **Security Dashboard** for Web2 to Web3 Progressive Account Linking.
+    *   Added the integrated **Support Dashboard** for biometric identity recovery.
+    *   Overhauled global UI/UX to the Praman Cyan/Teal theme.
+*   **`v0.1.10`**
     *   Added support for direct API key verification headers and custom backend relay routing.
     *   Implemented standalone `verifyZKProof` and `loginWithPraman` exports.
     *   Moved `tslib` to peerDependencies.

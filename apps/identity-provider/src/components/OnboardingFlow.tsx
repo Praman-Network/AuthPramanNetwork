@@ -6,9 +6,16 @@ import {
   DeviceGuard,
   useLivenessGuard,
   PramanAuth,
-  DEFAULT_RELAYER_URL
+  DEFAULT_RELAYER_URL,
+  generateAuthPayload
 } from '@praman-network/sdk';
+import type { RequestedScope } from '@praman-network/sdk';
+import { ConsentModal } from './ConsentModal';
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
+import { EmailLogin } from './EmailLogin';
+import { SecurityDashboard } from './SecurityDashboard';
+import { SupportDashboard } from './SupportDashboard';
+import { useEmbeddedWallet } from '../hooks/useEmbeddedWallet';
 
 const faceapi = (window as any).faceapi;
 
@@ -22,12 +29,17 @@ export function OnboardingFlow() {
   });
 
   const [isPopupFlow, setIsPopupFlow] = useState(false);
-  const [clientApiKey, setClientApiKey] = useState<string | null>(null);
+
+  // Auth Method & Embedded Wallet states
+  const [authMethod, setAuthMethod] = useState<'wallet' | 'email'>('wallet');
+  const [emailAuthenticated, setEmailAuthenticated] = useState(false);
+  const { isGenerating, embeddedWallet, embeddedAddress } = useEmbeddedWallet();
 
   // Consent states
-  const [hasConsented, setHasConsented] = useState(false);
-  const [consentEmail, setConsentEmail] = useState(true);
-  const [consentProfile, setConsentProfile] = useState(true);
+  const [showConsentModal, setShowConsentModal] = useState(false);
+  const [authResult, setAuthResult] = useState<any>(null);
+  const [requestedScopes, setRequestedScopes] = useState<RequestedScope[]>([]);
+
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [screenshot, setScreenshot] = useState<string | null>(null);
@@ -77,8 +89,11 @@ export function OnboardingFlow() {
 
   // Cross-Device Handover Desktop states
   const [isHandoverActive, setIsHandoverActive] = useState(false);
+  const [isFaceAligned, setIsFaceAligned] = useState(false);
   const [handoverSessionId, setHandoverSessionId] = useState<string | null>(null);
   const [handoverToken, setHandoverToken] = useState<string | null>(null);
+  const [showSecurityDashboard, setShowSecurityDashboard] = useState(false);
+  const [showSupportDashboard, setShowSupportDashboard] = useState(false);
 
   // Mobile Handover Client states (if page opened via QR code URL)
   const [handoverUrlToken, setHandoverUrlToken] = useState<string | null>(null);
@@ -142,13 +157,22 @@ export function OnboardingFlow() {
       if (modeParam === 'login' || modeParam === 'register') {
         setAuthMode(modeParam);
       }
-      if (apiKeyParam) {
-        setClientApiKey(apiKeyParam);
-      }
       if (scopesParam) {
-        const scopes = scopesParam.split(',');
-        setConsentEmail(scopes.includes('email'));
-        setConsentProfile(scopes.includes('profile'));
+        const scopesList = scopesParam.split(',');
+        const parsedScopes: RequestedScope[] = scopesList.map(scope => ({
+          field: scope,
+          required: scope === 'face_zk_proof' || scope === 'wallet_address', // Assume these are required
+          description: `Permission to access ${scope.replace('_', ' ')}`
+        }));
+        setRequestedScopes(parsedScopes);
+      } else {
+        // Defaults
+        setRequestedScopes([
+          { field: 'wallet_address', required: true, description: 'Required to map your Web3 identity' },
+          { field: 'face_zk_proof', required: true, description: 'Generates a zero-knowledge proof of facial metrics' },
+          { field: 'email', required: false, description: 'Accesses your registered email address' },
+          { field: 'profile', required: false, description: 'Accesses your full name and other profile details' }
+        ]);
       }
       addLog(`Popup-based verification flow detected. Mode: ${modeParam || 'register'}, Scopes: ${scopesParam || 'none'}`);
     }
@@ -364,12 +388,19 @@ export function OnboardingFlow() {
 
     try {
       addLog('Connecting web3 wallet provider...');
-      const signer = await connectWallet();
-      if (!signer) {
-        addLog('Signer connection required.');
-        return;
+      
+      let signer = signerInstance;
+      if (authMethod === 'email' && embeddedWallet) {
+        signer = embeddedWallet;
+        setSignerInstance(signer);
+      } else {
+        signer = await connectWallet();
+        if (!signer) {
+          addLog('Signer connection required.');
+          return;
+        }
+        setSignerInstance(signer);
       }
-      setSignerInstance(signer);
 
       // Check device count first
       const devices = await navigator.mediaDevices.enumerateDevices();
@@ -409,43 +440,73 @@ export function OnboardingFlow() {
       addLog('Popup success handler active, but no parent window (window.opener) detected.');
       return;
     }
-
-    addLog('Authentication successful! Sending payload back to parent window...');
-
-    // Standardized Firebase-style response
-    const payload = {
-      success: true,
-      user: {
-        did: walletAddress || result.faceDescriptorHash || '',
-        email: consentEmail ? (result.pii?.email || formData.email) : undefined,
-        verified: true
-      },
-      token: result.jwt || '',
-      proof: result.zkProof || zkProof || undefined
-    };
-
-    window.opener.postMessage({
-      type: 'PRAMAN_AUTH_SUCCESS',
-      payload
-    }, '*');
-
-    // Close the popup after a short delay so the user can see the success state
-    setTimeout(() => {
-      window.close();
-    }, 1500);
+    
+    // Instead of immediately sending back data, we show the consent modal
+    setAuthResult(result);
+    setShowConsentModal(true);
   };
 
-  const handleCancel = () => {
+  const handleConsentAuthorize = (consentState: any) => {
+    setShowConsentModal(false);
+    addLog('Authentication successful and user authorized! Sending payload back to parent window...');
+
+    if (!authResult) return;
+
+    // Use embedded wallet address if present
+    const activeAddress = embeddedAddress ? embeddedAddress : walletAddress;
+
+    // Prepare actual data the user has in this session
+    const userActualData = {
+      wallet_address: activeAddress || authResult.faceDescriptorHash || '',
+      face_zk_proof: authResult.zkProof || zkProof,
+      email: authResult.pii?.email || formData.email,
+      profile: authResult.pii?.name || formData.name,
+      // Include any other available data
+    };
+
+    try {
+      const securePayload = generateAuthPayload(userActualData, consentState, requestedScopes);
+      
+      const payload = {
+        success: true,
+        user: {
+          did: securePayload.wallet_address || '',
+          email: securePayload.email,
+          verified: true
+        },
+        token: authResult.jwt || '',
+        proof: securePayload.face_zk_proof,
+        granularConsentData: securePayload
+      };
+
+      window.opener.postMessage({
+        type: 'PRAMAN_AUTH_SUCCESS',
+        payload
+      }, '*');
+
+      setTimeout(() => {
+        window.close();
+      }, 1500);
+    } catch (err: any) {
+      addLog(`Failed to generate secure payload: ${err.message}`);
+    }
+  };
+
+  const handleConsentCancel = () => {
+    setShowConsentModal(false);
     if (window.opener) {
       window.opener.postMessage({
         type: 'PRAMAN_AUTH_ERROR',
-        error: 'Authentication cancelled by user.'
+        error: 'Authentication cancelled by user during authorization step.'
       }, '*');
       window.close();
     } else {
-      addLog('Authentication cancelled.');
+      addLog('Authentication cancelled during authorization.');
     }
   };
+
+
+
 
   useEffect(() => {
     if (sdkError && isPopupFlow) {
@@ -492,9 +553,9 @@ export function OnboardingFlow() {
     }
   };
 
-  // Real-time landmarks loop for active anti-spoofing
+  // Real-time landmarks loop for active anti-spoofing and face alignment
   useEffect(() => {
-    if (isScanning && landmarker && livenessLevel !== 'off' && webcamRef.current) {
+    if (isScanning && landmarker && webcamRef.current) {
       let isSubscribed = true;
       let frameId: number;
 
@@ -506,7 +567,35 @@ export function OnboardingFlow() {
           try {
             const results = landmarker.detectForVideo(video, performance.now());
             if (results.faceLandmarks && results.faceLandmarks.length > 0 && isSubscribed) {
-              evaluateFrame(results.faceLandmarks[0]);
+              
+              // Calculate Face Alignment
+              let minX = 1, maxX = 0, minY = 1, maxY = 0;
+              for (const point of results.faceLandmarks[0]) {
+                if (point.x < minX) minX = point.x;
+                if (point.x > maxX) maxX = point.x;
+                if (point.y < minY) minY = point.y;
+                if (point.y > maxY) maxY = point.y;
+              }
+              const width = maxX - minX;
+              const height = maxY - minY;
+              const centerX = minX + width / 2;
+              const centerY = minY + height / 2;
+
+              // Face must take up roughly 20-70% of frame and be relatively centered
+              const aligned = 
+                width > 0.2 && width < 0.8 && 
+                height > 0.25 && height < 0.8 &&
+                centerX > 0.25 && centerX < 0.75 &&
+                centerY > 0.25 && centerY < 0.75;
+                
+              setIsFaceAligned(aligned);
+
+              // Only evaluate liveness proofs if the face is properly aligned inside the frame
+              if (aligned && livenessLevel !== 'off') {
+                evaluateFrame(results.faceLandmarks[0]);
+              }
+            } else {
+              setIsFaceAligned(false);
             }
           } catch (e) {
             // Ignore landmark transient errors
@@ -645,7 +734,7 @@ export function OnboardingFlow() {
     const currentIndex = stepsOrder.indexOf(progressStep);
     const targetIndex = stepsOrder.indexOf(step as ProgressStep);
 
-    if (currentIndex > targetIndex) return 'border-purple-600 text-purple-400 bg-purple-950/20'; // Completed
+    if (currentIndex > targetIndex) return 'border-cyan-600 text-cyan-400 bg-cyan-950/20'; // Completed
     if (progressStep === step) return 'border-blue-500 text-blue-400 bg-blue-950/20 animate-pulse-ring'; // Active
     return 'border-zinc-800 text-zinc-500 bg-zinc-900/40'; // Pending
   };
@@ -681,12 +770,45 @@ export function OnboardingFlow() {
                 const signer = await connectWallet();
                 if (signer) setSignerInstance(signer);
               }}
-              className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-xs font-semibold rounded-xl"
+              className="px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 text-xs font-semibold rounded-xl"
             >
               Connect Mobile Wallet
             </button>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // SHOW SECURITY DASHBOARD IF TOGGLED
+  if (showSecurityDashboard) {
+    return (
+      <div className="w-full max-w-4xl mx-auto p-4 flex flex-col items-center">
+         <button
+            onClick={() => setShowSecurityDashboard(false)}
+            className="mb-4 self-start px-4 py-2 border border-zinc-800 text-zinc-400 rounded-xl text-xs font-bold hover:bg-zinc-900"
+          >
+            ← Back to Onboarding Flow
+          </button>
+         <SecurityDashboard 
+            email={formData.email || ''} 
+            embeddedWalletAddress={embeddedAddress || walletAddress || ''}
+         />
+      </div>
+    );
+  }
+
+  // SHOW SUPPORT DASHBOARD IF TOGGLED
+  if (showSupportDashboard) {
+    return (
+      <div className="w-full max-w-4xl mx-auto p-4 flex flex-col items-center">
+         <button
+            onClick={() => setShowSupportDashboard(false)}
+            className="mb-4 self-start px-4 py-2 border border-zinc-800 text-zinc-400 rounded-xl text-xs font-bold hover:bg-zinc-900"
+          >
+            ← Back to Onboarding Flow
+          </button>
+         <SupportDashboard />
       </div>
     );
   }
@@ -740,7 +862,7 @@ export function OnboardingFlow() {
               />
             </div>
 
-            <div className="text-[10px] font-mono text-purple-400 animate-pulse">
+            <div className="text-[10px] font-mono text-cyan-400 animate-pulse">
               ⚡ Listening for mobile verification payload...
             </div>
 
@@ -773,127 +895,21 @@ export function OnboardingFlow() {
       {/* Onboarding Main panel */}
       <div className="w-full lg:w-3/5 bg-zinc-900/60 backdrop-blur-xl border border-zinc-800 rounded-3xl p-6 lg:p-8 shadow-2xl relative overflow-hidden">
 
-        <div className="absolute top-0 right-0 w-48 h-48 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-0 right-0 w-48 h-48 bg-cyan-600/10 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-48 h-48 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
 
-        {isPopupFlow && !hasConsented ? (
-          <div className="space-y-6 py-4">
-            <div className="text-center lg:text-left">
-              <span className="px-3 py-1 text-xs font-semibold tracking-widest text-purple-400 uppercase bg-purple-950/30 border border-purple-800/50 rounded-full">
-                Data Sharing Request
-              </span>
-              <h1 className="text-2xl font-bold tracking-tight text-white mt-4">
-                An application is requesting your Identity
-              </h1>
-              <p className="text-xs text-zinc-400 mt-2 font-mono">
-                Requested by: <span className="text-purple-400 font-semibold">{document.referrer ? new URL(document.referrer).host : 'Secure Client Application'}</span>
-                {clientApiKey && (
-                  <>
-                    <br />
-                    API Key: <span className="text-purple-405 font-semibold text-[10px]">{clientApiKey}</span>
-                  </>
-                )}
-              </p>
-            </div>
+        {showConsentModal && isPopupFlow && (
+          <ConsentModal 
+            requestedScopes={requestedScopes}
+            onAuthorize={handleConsentAuthorize}
+            onCancel={handleConsentCancel}
+          />
+        )}
 
-            <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-5 space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 border-b border-zinc-900 pb-2">
-                Requested Permissions
-              </h3>
 
-              {/* Permission Item 1: Mandatory Biometric ZK Proof */}
-              <div className="flex items-start justify-between gap-4 p-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-green-400 text-sm">🛡️</span>
-                    <span className="text-xs font-bold text-white">Biometric ZK Proof (Mandatory)</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed pl-6">
-                    Generates a zero-knowledge proof of facial metrics. Your raw biometric data is never shared.
-                  </p>
-                </div>
-                <div className="relative inline-flex items-center cursor-not-allowed">
-                  <input type="checkbox" checked disabled className="sr-only peer" />
-                  <div className="w-9 h-5 bg-purple-650 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600 opacity-60"></div>
-                </div>
-              </div>
-
-              {/* Permission Item 2: Email Address */}
-              <div className="flex items-start justify-between gap-4 p-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl hover:border-zinc-700/80 transition-colors">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-blue-400 text-sm">📧</span>
-                    <span className="text-xs font-bold text-white">Share Email Address</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed pl-6">
-                    Accesses your registered email address to verify account ownership.
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={consentEmail}
-                    onChange={(e) => setConsentEmail(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-zinc-850 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
-                </label>
-              </div>
-
-              {/* Permission Item 3: Profile Info */}
-              <div className="flex items-start justify-between gap-4 p-3 bg-zinc-900/40 border border-zinc-800/60 rounded-xl hover:border-zinc-700/80 transition-colors">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-purple-400 text-sm">👤</span>
-                    <span className="text-xs font-bold text-white">Share Profile Information</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed pl-6">
-                    Accesses your full name and other profile details registered with Praman Network.
-                  </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={consentProfile}
-                    onChange={(e) => setConsentProfile(e.target.checked)}
-                    className="sr-only peer"
-                  />
-                  <div className="w-9 h-5 bg-zinc-850 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
-                </label>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handleCancel}
-                className="flex-1 py-3.5 text-xs font-bold uppercase border border-zinc-800 text-zinc-400 hover:bg-zinc-800/50 rounded-xl transition-all"
-              >
-                Reject &amp; Deny
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  setHasConsented(true);
-                  addLog('User granted data permissions. Proceeding to identity verification...');
-
-                  // Automatically trigger wallet connection if not connected
-                  if (!walletAddress) {
-                    addLog('Automatically connecting wallet...');
-                    await connectWallet();
-                  }
-                }}
-                className="flex-1 py-3.5 text-xs font-bold uppercase bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-xl glow-purple transition-all"
-              >
-                Approve &amp; Continue
-              </button>
-            </div>
-          </div>
-        ) : (
-          <>
 
             <div className="mb-6 text-center lg:text-left">
-              <span className="px-3 py-1 text-xs font-semibold tracking-widest text-purple-400 uppercase bg-purple-950/30 border border-purple-800/50 rounded-full">
+              <span className="px-3 py-1 text-xs font-semibold tracking-widest text-cyan-400 uppercase bg-cyan-950/30 border border-cyan-800/50 rounded-full">
                 Biometric Identity Provider
               </span>
               <h1 className="text-3xl font-bold tracking-tight text-white mt-3">
@@ -912,7 +928,7 @@ export function OnboardingFlow() {
                   id="tab-register"
                   onClick={() => setAuthMode('register')}
                   className={`flex-1 py-2.5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-200 ${authMode === 'register'
-                      ? 'bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-lg'
+                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-lg'
                       : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                 >
@@ -947,7 +963,7 @@ export function OnboardingFlow() {
                       onChange={handleInputChange}
                       placeholder="Enter name"
                       disabled={isProcessing}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition-colors"
                     />
                     {formErrors.name && <p className="text-xs text-red-500 mt-1">{formErrors.name}</p>}
                   </div>
@@ -962,7 +978,7 @@ export function OnboardingFlow() {
                       onChange={handleInputChange}
                       placeholder="Enter email"
                       disabled={isProcessing}
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors"
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition-colors"
                     />
                     {formErrors.email && <p className="text-xs text-red-500 mt-1">{formErrors.email}</p>}
                   </div>
@@ -979,7 +995,7 @@ export function OnboardingFlow() {
                     onChange={handleInputChange}
                     placeholder="+1234567890"
                     disabled={isProcessing}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-purple-500 transition-colors"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-white placeholder-zinc-600 focus:outline-none focus:border-cyan-500 transition-colors"
                   />
                   {formErrors.mobile && <p className="text-xs text-red-500 mt-1">{formErrors.mobile}</p>}
                 </div>
@@ -998,55 +1014,94 @@ export function OnboardingFlow() {
                   </select>
                 </div>
 
+                 {/* Auth Method Toggle */}
+                 <div className="flex gap-4 mb-4 mt-4">
+                   <button
+                     type="button"
+                     onClick={() => setAuthMethod('wallet')}
+                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                   >
+                     Web3 Wallet
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setAuthMethod('email')}
+                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                   >
+                     Email Magic Link
+                   </button>
+                 </div>
+
                  {/* Wallet Info Banner */}
-                {!hasMetaMask ? (
-                  <div className="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-start gap-3">
-                      <div className="text-red-400 text-lg mt-0.5">⚠️</div>
-                      <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-red-400">MetaMask Wallet Required</h4>
-                        <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
-                          MetaMask is required to sign transactions and verify identity. If you do not have it, create an account using the link below.
-                        </p>
-                      </div>
-                    </div>
-                    <a
-                      href="https://metamask.io/download/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center w-full py-2.5 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
-                    >
-                      Install MetaMask 🦊
-                    </a>
-                  </div>
-                ) : (
-                  <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-4 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${walletAddress ? 'bg-green-500 glow-green' : 'bg-amber-500 animate-pulse'}`} />
-                      <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Connected Wallet</h4>
-                        <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[200px] sm:max-w-xs">
-                          {walletAddress || 'Not Connected'}
-                        </p>
-                      </div>
-                    </div>
-                    {!walletAddress && (
-                      <button
-                        type="button"
-                        onClick={connectWallet}
-                        className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 rounded-xl transition-all"
-                      >
-                        Connect Wallet
-                      </button>
-                    )}
-                  </div>
-                )}
+                 {authMethod === 'wallet' ? (
+                   !hasMetaMask ? (
+                     <div className="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-3">
+                       <div className="flex items-start gap-3">
+                         <div className="text-red-400 text-lg mt-0.5">⚠️</div>
+                         <div>
+                           <h4 className="text-xs font-bold uppercase tracking-wider text-red-400">MetaMask Wallet Required</h4>
+                           <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                             MetaMask is required to sign transactions and verify identity. If you do not have it, create an account using the link below.
+                           </p>
+                         </div>
+                       </div>
+                       <a
+                         href="https://metamask.io/download/"
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         className="inline-flex items-center justify-center w-full py-2.5 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                       >
+                         Install MetaMask 🦊
+                       </a>
+                     </div>
+                   ) : (
+                     <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-4 flex items-center justify-between gap-4">
+                       <div className="flex items-center gap-3">
+                         <div className={`w-3 h-3 rounded-full ${walletAddress ? 'bg-green-500 glow-green' : 'bg-amber-500 animate-pulse'}`} />
+                         <div>
+                           <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Connected Wallet</h4>
+                           <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[200px] sm:max-w-xs">
+                             {walletAddress || 'Not Connected'}
+                           </p>
+                         </div>
+                       </div>
+                       {!walletAddress && (
+                         <button
+                           type="button"
+                           onClick={connectWallet}
+                           className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 rounded-xl transition-all"
+                         >
+                           Connect Wallet
+                         </button>
+                       )}
+                     </div>
+                   )
+                 ) : (
+                   !emailAuthenticated ? (
+                     <EmailLogin 
+                       isProcessing={isGenerating}
+                       onSuccess={() => {
+                         setEmailAuthenticated(true);
+                       }}
+                     />
+                   ) : (
+                     <div className="bg-green-950/20 border border-green-900/40 rounded-2xl p-4 flex items-center gap-4">
+                       <div className="w-8 h-8 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-lg">✓</div>
+                       <div>
+                         <h4 className="text-xs font-bold uppercase tracking-wider text-green-400">Embedded Wallet Generated</h4>
+                         <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[250px]">
+                           {embeddedAddress}
+                         </p>
+                       </div>
+                     </div>
+                   )
+                 )}
 
                 <button
                   id="btn-register-scan"
                   type="submit"
                   disabled={isProcessing || !isModelLoaded}
-                  className={`w-full py-4 rounded-xl text-sm font-bold tracking-wider uppercase text-white bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 active:scale-[0.99] transition-all flex items-center justify-center gap-3 shadow-lg glow-purple ${(!isModelLoaded || isProcessing) && 'opacity-50 cursor-not-allowed'
+                  className={`w-full py-4 rounded-xl text-sm font-bold tracking-wider uppercase text-white bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-[0.99] transition-all flex items-center justify-center gap-3 shadow-lg glow-cyan ${(!isModelLoaded || isProcessing) && 'opacity-50 cursor-not-allowed'
                     }`}
                 >
                   {!isModelLoaded ? (
@@ -1087,7 +1142,7 @@ export function OnboardingFlow() {
                   <select
                     value={livenessLevel}
                     onChange={(e) => setLivenessLevel(e.target.value as any)}
-                    className="w-full bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs rounded-xl px-4 py-3 outline-none focus:border-purple-500"
+                    className="w-full bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs rounded-xl px-4 py-3 outline-none focus:border-cyan-500"
                   >
                     <option value="standard">Standard Protection (Liveness Score &gt; 0.85)</option>
                     <option value="strict">Strict Protection (Liveness Score &gt; 0.95)</option>
@@ -1108,49 +1163,88 @@ export function OnboardingFlow() {
                   ))}
                 </div>
 
+                 {/* Auth Method Toggle */}
+                 <div className="flex gap-4 mb-4 mt-4">
+                   <button
+                     type="button"
+                     onClick={() => setAuthMethod('wallet')}
+                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                   >
+                     Web3 Wallet
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => setAuthMethod('email')}
+                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                   >
+                     Email Magic Link
+                   </button>
+                 </div>
+
                  {/* Wallet Banner */}
-                {!hasMetaMask ? (
-                  <div className="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-3">
-                    <div className="flex items-start gap-3">
-                      <div className="text-red-400 text-lg mt-0.5">⚠️</div>
-                      <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-red-400">MetaMask Wallet Required</h4>
-                        <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
-                          MetaMask is required to sign transactions and verify identity. If you do not have it, create an account using the link below.
-                        </p>
-                      </div>
-                    </div>
-                    <a
-                      href="https://metamask.io/download/"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center w-full py-2.5 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
-                    >
-                      Install MetaMask 🦊
-                    </a>
-                  </div>
-                ) : (
-                  <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-4 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-3 h-3 rounded-full ${walletAddress ? 'bg-green-500 glow-green' : 'bg-amber-500 animate-pulse'}`} />
-                      <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Connected Wallet</h4>
-                        <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[200px] sm:max-w-xs">
-                          {walletAddress || 'Not Connected'}
-                        </p>
-                      </div>
-                    </div>
-                    {!walletAddress && (
-                      <button
-                        type="button"
-                        onClick={connectWallet}
-                        className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 rounded-xl transition-all"
-                      >
-                        Connect Wallet
-                      </button>
-                    )}
-                  </div>
-                )}
+                 {authMethod === 'wallet' ? (
+                   !hasMetaMask ? (
+                     <div className="bg-red-950/20 border border-red-900/40 rounded-2xl p-4 space-y-3">
+                       <div className="flex items-start gap-3">
+                         <div className="text-red-400 text-lg mt-0.5">⚠️</div>
+                         <div>
+                           <h4 className="text-xs font-bold uppercase tracking-wider text-red-400">MetaMask Wallet Required</h4>
+                           <p className="text-[11px] text-zinc-400 mt-1 leading-relaxed">
+                             MetaMask is required to sign transactions and verify identity. If you do not have it, create an account using the link below.
+                           </p>
+                         </div>
+                       </div>
+                       <a
+                         href="https://metamask.io/download/"
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         className="inline-flex items-center justify-center w-full py-2.5 bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                       >
+                         Install MetaMask 🦊
+                       </a>
+                     </div>
+                   ) : (
+                     <div className="bg-zinc-950/80 border border-zinc-800/80 rounded-2xl p-4 flex items-center justify-between gap-4">
+                       <div className="flex items-center gap-3">
+                         <div className={`w-3 h-3 rounded-full ${walletAddress ? 'bg-green-500 glow-green' : 'bg-amber-500 animate-pulse'}`} />
+                         <div>
+                           <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Connected Wallet</h4>
+                           <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[200px] sm:max-w-xs">
+                             {walletAddress || 'Not Connected'}
+                           </p>
+                         </div>
+                       </div>
+                       {!walletAddress && (
+                         <button
+                           type="button"
+                           onClick={connectWallet}
+                           className="px-4 py-2 text-xs font-semibold text-white bg-zinc-800 hover:bg-zinc-700 active:scale-95 border border-zinc-700 rounded-xl transition-all"
+                         >
+                           Connect Wallet
+                         </button>
+                       )}
+                     </div>
+                   )
+                 ) : (
+                   !emailAuthenticated ? (
+                     <EmailLogin 
+                       isProcessing={isGenerating}
+                       onSuccess={() => {
+                         setEmailAuthenticated(true);
+                       }}
+                     />
+                   ) : (
+                     <div className="bg-green-950/20 border border-green-900/40 rounded-2xl p-4 flex items-center gap-4">
+                       <div className="w-8 h-8 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-lg">✓</div>
+                       <div>
+                         <h4 className="text-xs font-bold uppercase tracking-wider text-green-400">Embedded Wallet Generated</h4>
+                         <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[250px]">
+                           {embeddedAddress}
+                         </p>
+                       </div>
+                     </div>
+                   )
+                 )}
 
                 <button
                   id="btn-login-scan"
@@ -1176,7 +1270,7 @@ export function OnboardingFlow() {
             {/* WEBCAM SCANNING INTERFACE */}
             {isScanning && (
               <div className="flex flex-col items-center justify-center space-y-6">
-                <div className="relative w-full max-w-sm aspect-square bg-zinc-950 rounded-2xl overflow-hidden border-2 border-purple-500 glow-purple">
+                <div className={`relative w-full max-w-sm aspect-square bg-zinc-950 rounded-2xl overflow-hidden border-2 transition-colors duration-300 ${isFaceAligned ? 'border-green-500 glow-green' : 'border-red-500 glow-red'}`}>
 
                   <Webcam
                     audio={false}
@@ -1186,25 +1280,25 @@ export function OnboardingFlow() {
                     className="w-full h-full object-cover"
                   />
 
-                  <div className="absolute inset-0 border-4 border-dashed border-purple-500/20 rounded-2xl pointer-events-none" />
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 h-4/5 border-2 border-purple-500/50 rounded-full pointer-events-none flex items-center justify-center">
-                    <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-purple-500 to-transparent absolute animate-scan pointer-events-none" />
+                  <div className={`absolute inset-0 border-4 border-dashed transition-colors duration-300 ${isFaceAligned ? 'border-green-500/20' : 'border-red-500/20'} rounded-2xl pointer-events-none`} />
+                  <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-4/5 h-4/5 border-2 transition-colors duration-300 ${isFaceAligned ? 'border-green-500/50' : 'border-red-500/50'} rounded-full pointer-events-none flex items-center justify-center`}>
+                    <div className={`w-full h-0.5 bg-gradient-to-r from-transparent ${isFaceAligned ? 'via-green-500' : 'via-red-500'} to-transparent absolute animate-scan pointer-events-none`} />
                   </div>
 
-                  <div className="absolute top-4 left-4 w-6 h-6 border-t-4 border-l-4 border-purple-500 pointer-events-none" />
-                  <div className="absolute top-4 right-4 w-6 h-6 border-t-4 border-r-4 border-purple-500 pointer-events-none" />
-                  <div className="absolute bottom-4 left-4 w-6 h-6 border-b-4 border-l-4 border-purple-500 pointer-events-none" />
-                  <div className="absolute bottom-4 right-4 w-6 h-6 border-b-4 border-r-4 border-purple-500 pointer-events-none" />
+                  <div className={`absolute top-4 left-4 w-6 h-6 border-t-4 border-l-4 transition-colors duration-300 pointer-events-none ${isFaceAligned ? 'border-green-500' : 'border-red-500'}`} />
+                  <div className={`absolute top-4 right-4 w-6 h-6 border-t-4 border-r-4 transition-colors duration-300 pointer-events-none ${isFaceAligned ? 'border-green-500' : 'border-red-500'}`} />
+                  <div className={`absolute bottom-4 left-4 w-6 h-6 border-b-4 border-l-4 transition-colors duration-300 pointer-events-none ${isFaceAligned ? 'border-green-500' : 'border-red-500'}`} />
+                  <div className={`absolute bottom-4 right-4 w-6 h-6 border-b-4 border-r-4 transition-colors duration-300 pointer-events-none ${isFaceAligned ? 'border-green-500' : 'border-red-500'}`} />
 
                   {/* Dynamic Liveness instruction overlay */}
                   <div className="absolute bottom-4 inset-x-4 bg-zinc-950/95 backdrop-blur border border-zinc-800 rounded-lg p-2.5 text-center pointer-events-none">
-                    <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
-                      {livenessLevel === 'off' ? 'Face Frame Alignment' : 'Spoofing Guard Active'}
+                    <p className={`text-[10px] font-bold uppercase tracking-wider ${isFaceAligned ? 'text-green-500' : 'text-red-500'}`}>
+                      {!isFaceAligned ? 'Please Align Face in Frame' : (livenessLevel === 'off' ? 'Face Frame Aligned' : 'Spoofing Guard Active')}
                     </p>
-                    <p className="text-xs text-purple-400 font-semibold mt-0.5">
-                      {livenessLevel === 'off'
-                        ? 'Center face inside the frame'
-                        : liveness.instruction || 'Analyzing structure...'}
+                    <p className={`text-xs font-semibold mt-0.5 ${isFaceAligned ? 'text-green-400' : 'text-red-400'}`}>
+                      {!isFaceAligned
+                        ? 'Center face inside the frame to begin'
+                        : (livenessLevel === 'off' ? 'Ready to capture' : (liveness.instruction || 'Analyzing structure...'))}
                     </p>
                   </div>
                 </div>
@@ -1216,7 +1310,7 @@ export function OnboardingFlow() {
                       <span className="text-zinc-400 font-medium">
                         Step {liveness.challengeIndex + 1}/3: {challengeLabelMap[liveness.currentChallenge]}
                       </span>
-                      <span className="text-purple-400 font-bold">Attempt {liveness.attempts + 1}/3</span>
+                      <span className="text-cyan-400 font-bold">Attempt {liveness.attempts + 1}/3</span>
                     </div>
 
                     {liveness.currentChallenge === 'blink' ? (
@@ -1252,7 +1346,7 @@ export function OnboardingFlow() {
                     <button
                       type="button"
                       onClick={captureAndAuthenticate}
-                      className="flex-1 py-3 text-xs font-bold uppercase bg-purple-600 hover:bg-purple-500 text-white rounded-xl glow-purple transition-all"
+                      className="flex-1 py-3 text-xs font-bold uppercase bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl glow-cyan transition-all"
                     >
                       Capture &amp; Verify
                     </button>
@@ -1280,7 +1374,7 @@ export function OnboardingFlow() {
                   <h2 className="text-2xl font-bold text-white">Identity Secured!</h2>
                   {redirectUrl ? (
                     <p className="text-sm text-zinc-400 mt-2">
-                      Authentication verified. Redirecting back to app in <span className="font-mono text-purple-400 text-lg font-bold">{countdown}</span> seconds...
+                      Authentication verified. Redirecting back to app in <span className="font-mono text-cyan-400 text-lg font-bold">{countdown}</span> seconds...
                     </p>
                   ) : (
                     <p className="text-sm text-zinc-400 mt-2">
@@ -1292,7 +1386,7 @@ export function OnboardingFlow() {
                 <div className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl p-4 text-left font-mono text-xs space-y-2.5">
                   <div>
                     <span className="text-zinc-500">IPFS CID:</span>
-                    <span className="text-purple-400 ml-2 break-all">{ipfsCid}</span>
+                    <span className="text-cyan-400 ml-2 break-all">{ipfsCid}</span>
                   </div>
                   {zkProof && (
                     <div>
@@ -1303,12 +1397,12 @@ export function OnboardingFlow() {
                   {livenessLevel !== 'off' && liveness.score > 0 && (
                     <div>
                       <span className="text-zinc-500">Liveness Score:</span>
-                      <span className="text-purple-400 ml-2 font-bold">{liveness.score}</span>
+                      <span className="text-cyan-400 ml-2 font-bold">{liveness.score}</span>
                     </div>
                   )}
                   <div>
                     <span className="text-zinc-500">Wallet Auth:</span>
-                    <span className="text-blue-400 ml-2 truncate">{walletAddress}</span>
+                    <span className="text-blue-400 ml-2 truncate">{embeddedAddress ? embeddedAddress : walletAddress}</span>
                   </div>
                 </div>
 
@@ -1332,7 +1426,7 @@ export function OnboardingFlow() {
                           type="text"
                           value={customRedirectUrl}
                           onChange={(e) => setCustomRedirectUrl(e.target.value)}
-                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 font-mono focus:outline-none focus:border-purple-500"
+                          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-700 font-mono focus:outline-none focus:border-cyan-500"
                         />
                         <button
                           type="button"
@@ -1346,7 +1440,7 @@ export function OnboardingFlow() {
 
                     <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl p-4 space-y-4">
                       <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-purple-400">Decryption Sandbox</h4>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-cyan-400">Decryption Sandbox</h4>
                         <p className="text-zinc-500 text-[11px] mt-1">
                           Retrieve and decrypt your PII directly from the client. Prove the Lit Protocol access control holds.
                         </p>
@@ -1359,8 +1453,8 @@ export function OnboardingFlow() {
                       )}
 
                       {decryptedData ? (
-                        <div className="bg-purple-950/20 border border-purple-800/40 rounded-lg p-3 space-y-1 font-mono text-[11px]">
-                          <div className="text-purple-400 font-bold uppercase mb-1">Decrypted PII Payload:</div>
+                        <div className="bg-cyan-950/20 border border-cyan-800/40 rounded-lg p-3 space-y-1 font-mono text-[11px]">
+                          <div className="text-cyan-400 font-bold uppercase mb-1">Decrypted PII Payload:</div>
                           <div>Name: <span className="text-white font-sans font-medium">{decryptedData.name}</span></div>
                           <div>Email: <span className="text-white font-sans font-medium">{decryptedData.email}</span></div>
                           <div>Mobile: <span className="text-white font-sans font-medium">{decryptedData.mobile}</span></div>
@@ -1370,7 +1464,7 @@ export function OnboardingFlow() {
                           type="button"
                           onClick={handleTestDecryption}
                           disabled={isDecrypting}
-                          className="w-full py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+                          className="w-full py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
                         >
                           {isDecrypting ? (
                             <>
@@ -1383,6 +1477,14 @@ export function OnboardingFlow() {
                         </button>
                       )}
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowSecurityDashboard(true)}
+                      className="w-full py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all shadow-lg"
+                    >
+                      🛡️ Open Security Dashboard (Link Wallets)
+                    </button>
 
                     <button
                       type="button"
@@ -1416,19 +1518,31 @@ export function OnboardingFlow() {
                 </div>
 
                 {(sdkError.toLowerCase().includes('already exists') || sdkError.toLowerCase().includes('sybil')) && (
-                  <button
-                    type="button"
-                    onClick={() => setAuthMode('login')}
-                    className="w-full py-2.5 bg-gradient-to-r from-green-700 to-teal-700 hover:from-green-600 hover:to-teal-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-                  >
-                    ⚡ Switch to Login Mode
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode('login')}
+                      className="w-full py-2.5 bg-gradient-to-r from-green-700 to-teal-700 hover:from-green-600 hover:to-teal-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+                    >
+                      ⚡ Switch to Login Mode
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowSupportDashboard(true)}
+                      className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      Lost Wallet or Face Changed? Contact Support
+                    </button>
+                  </div>
                 )}
                 {(sdkError.toLowerCase().includes('not found') || sdkError.toLowerCase().includes('register first')) && (
                   <button
                     type="button"
                     onClick={() => setAuthMode('register')}
-                    className="w-full py-2.5 bg-gradient-to-r from-purple-700 to-blue-700 hover:from-purple-600 hover:to-blue-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+                    className="w-full py-2.5 bg-gradient-to-r from-cyan-700 to-blue-700 hover:from-cyan-600 hover:to-blue-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
                   >
                     ✦ Switch to Register Mode
                   </button>
@@ -1437,8 +1551,6 @@ export function OnboardingFlow() {
 
               </div>
             )}
-          </>
-        )}
       </div>
 
       {/* Diagnostic Logs Sidebar */}
@@ -1502,7 +1614,7 @@ export function OnboardingFlow() {
                 let colorClass = 'text-zinc-300';
                 if (log.includes('error') || log.includes('Error')) colorClass = 'text-red-400 font-bold';
                 else if (log.includes('successfully') || log.includes('successful') || log.includes('secured') || log.includes('succeeded')) colorClass = 'text-green-400';
-                else if (log.includes('Lit Protocol') || log.includes('SIWE')) colorClass = 'text-purple-400';
+                else if (log.includes('Lit Protocol') || log.includes('SIWE')) colorClass = 'text-cyan-400';
                 else if (log.includes('IPFS') || log.includes('CID')) colorClass = 'text-blue-400';
                 else if (log.includes('ZK') || log.includes('proof')) colorClass = 'text-emerald-400';
 

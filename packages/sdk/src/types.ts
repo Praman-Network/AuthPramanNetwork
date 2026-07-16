@@ -57,4 +57,21 @@ export const PramanErrors = {
 
 export type PramanErrorType = typeof PramanErrors[keyof typeof PramanErrors];
 
+export interface RequestedScope {
+  field: string;
+  required: boolean;
+  description?: string;
+}
+
+export interface UserActualData {
+  wallet_address?: string;
+  face_zk_proof?: string;
+  email?: string;
+  github_profile?: string;
+  [key: string]: any;
+}
+
+export interface UserConsentState {
+  [field: string]: boolean;
+}
 

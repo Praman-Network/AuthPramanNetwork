@@ -425,6 +425,27 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.post('/api/support', async (req, res) => {
+  try {
+    const { name, email, walletAddress, issueType, description } = req.body;
+    
+    if (!name || !email || !description) {
+      return res.status(400).json({ success: false, error: 'Name, email, and description are required.' });
+    }
+
+    // In a production app, this would send an email or save to a database.
+    console.log(`[Support Ticket] New Issue from ${name} (${email}):`);
+    console.log(`Type: ${issueType}`);
+    console.log(`Wallet: ${walletAddress || 'N/A'}`);
+    console.log(`Description: ${description}`);
+    
+    return res.json({ success: true, message: 'Ticket received successfully.' });
+  } catch (error) {
+    console.error('[Relayer Error] Failed to process support ticket:', error);
+    return res.status(500).json({ success: false, error: 'Failed to process ticket.' });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`[PramanVerifyServer] Reference server running on port ${PORT}`);

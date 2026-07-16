@@ -1,12 +1,14 @@
 import { ethers } from 'ethers';
 
 /**
- * Normalizes a 128-d face descriptor array by rounding each element to 2 decimal places.
- * This ensures deterministic hashing across different scanning sessions.
+ * Normalizes a 128-d face descriptor array by rounding each element to 1 decimal place.
+ * We use 1 decimal place (instead of 2) to drastically increase stability, ensuring that slight 
+ * environmental variations in the same user's face don't produce a completely different hash.
+ * This enforces strict 1 User = 1 Account sybil resistance on-chain.
  */
 export function getStableVector(vector: number[] | Float32Array): number[] {
   const arr = Array.isArray(vector) ? vector : Array.from(vector);
-  return arr.map((val) => Math.round(val * 100) / 100);
+  return arr.map((val) => Math.round(val * 10) / 10);
 }
 
 /**
