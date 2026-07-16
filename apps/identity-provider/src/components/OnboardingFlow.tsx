@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Webcam from 'react-webcam';
-import { usePramanIdentity } from '../hooks/usePramanIdentity';
+import { usePramanIdentity } from "../hooks/usePramanIdentity";
+import { getPramanClient } from "@praman-network/sdk";
 import type { ProgressStep } from '../hooks/usePramanIdentity';
 import {
   DeviceGuard,
@@ -16,12 +17,14 @@ import { EmailLogin } from './EmailLogin';
 import { SecurityDashboard } from './SecurityDashboard';
 import { SupportDashboard } from './SupportDashboard';
 import { useEmbeddedWallet } from '../hooks/useEmbeddedWallet';
+import { usePrivy } from '@privy-io/react-auth';
 
 const faceapi = (window as any).faceapi;
 
 export function OnboardingFlow() {
   const hasMetaMask = typeof window !== 'undefined' && !!(window as any).ethereum;
   const [authMode, setAuthMode] = useState<'register' | 'login'>('register');
+  const [autoSwitchMessage, setAutoSwitchMessage] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -97,6 +100,19 @@ export function OnboardingFlow() {
 
   // Mobile Handover Client states (if page opened via QR code URL)
   const [handoverUrlToken, setHandoverUrlToken] = useState<string | null>(null);
+
+  const { authenticated, ready, logout } = usePrivy();
+  const [autoStartScanAfterEmail, setAutoStartScanAfterEmail] = useState(false);
+
+  // Sync Privy auth state on load
+  useEffect(() => {
+    if (ready && authenticated && !emailAuthenticated) {
+      setEmailAuthenticated(true);
+      setAuthMethod('email');
+      // Removed auto-switch to login to avoid interrupting registration
+    }
+  }, [ready, authenticated, emailAuthenticated]);
+
   const [handoverSessionData, setHandoverSessionData] = useState<{
     sessionId: string;
     address: string;
@@ -137,6 +153,7 @@ export function OnboardingFlow() {
     failAttempt: failLivenessAttempt,
     resetAll: resetLiveness,
     resetLockout: resetLivenessLockout,
+    clearError,
   } = useLivenessGuard(livenessLevel);
 
   // Extract redirectUrl or handoverToken from query parameters on mount
@@ -255,6 +272,94 @@ export function OnboardingFlow() {
       });
     }
   };
+
+  const startScanningFlow = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (authMode === 'register' && !validateForm()) return;
+
+    // Check Lockout
+    if (liveness.isLocked) {
+      addLog('Error: Anti-spoofing lockout is active. Please submit a manual support ticket.');
+      return;
+    }
+
+    try {
+      addLog('Connecting web3 wallet provider...');
+      
+      let signer = signerInstance;
+      if (authMethod === 'email') {
+        if (!embeddedWallet) {
+          addLog('Embedded wallet not ready yet. Please wait.');
+          return;
+        }
+        signer = embeddedWallet;
+        setSignerInstance(signer);
+      } else {
+        signer = await connectWallet();
+        if (!signer) {
+          addLog('Signer connection required.');
+          return;
+        }
+        setSignerInstance(signer);
+      }
+
+      // Check device count first
+            const address = await signer.getAddress();
+
+      if (authMode === "register") {
+        try {
+          const client = getPramanClient();
+          const isRegistered = await client.checkRegistration(address);
+          if (isRegistered) {
+            addLog("Email already registered! Switching to Login mode...");
+            setAuthMode("login");
+            setAutoSwitchMessage("This email is already registered on Praman Network! Please Login instead.");
+            return;
+          }
+        } catch (e) {
+          console.warn("Registration check failed", e);
+        }
+      }
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((d) => d.kind === 'videoinput');
+      if (videoDevices.length === 0) {
+        await triggerHandoverFlow();
+        return;
+      }
+
+      // Check for virtual cameras
+      const guardResult = await DeviceGuard.scanDevices();
+      if (guardResult.isVirtual) {
+        const errorMsg = `Virtual camera detected: "${guardResult.virtualCameraLabel}". Please connect a physical camera.`;
+        addLog(`Error: ${errorMsg}`);
+        alert(errorMsg);
+        return;
+      }
+
+      setIsScanning(true);
+      resetLiveness();
+      addLog(`Webcam active. Starting ${livenessLevel === 'off' ? 'manual capture' : 'anti-spoofing challenge'}...`);
+    } catch (err: any) {
+      if (
+        err.name === 'NotAllowedError' ||
+        err.name === 'PermissionDeniedError' ||
+        err.message?.includes('Permission denied')
+      ) {
+        await triggerHandoverFlow();
+      } else {
+        addLog(`Camera setup failed: ${err.message}`);
+      }
+    }
+  };
+
+  // Auto-start scanning flow after email authentication is complete and wallet is ready
+  useEffect(() => {
+    if (autoStartScanAfterEmail && emailAuthenticated && embeddedWallet && !isGenerating && !isScanning) {
+      setAutoStartScanAfterEmail(false);
+      startScanningFlow();
+    }
+  }, [autoStartScanAfterEmail, emailAuthenticated, embeddedWallet, isGenerating, isScanning]);
 
   // Triggers Cross-Device Handover Modal on desktop
   const triggerHandoverFlow = async () => {
@@ -376,64 +481,7 @@ export function OnboardingFlow() {
     };
   }, [handoverSessionId, isHandoverActive, addLog]);
 
-  const startScanningFlow = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (authMode === 'register' && !validateForm()) return;
 
-    // Check Lockout
-    if (liveness.isLocked) {
-      addLog('Error: Anti-spoofing lockout is active. Please submit a manual support ticket.');
-      return;
-    }
-
-    try {
-      addLog('Connecting web3 wallet provider...');
-      
-      let signer = signerInstance;
-      if (authMethod === 'email' && embeddedWallet) {
-        signer = embeddedWallet;
-        setSignerInstance(signer);
-      } else {
-        signer = await connectWallet();
-        if (!signer) {
-          addLog('Signer connection required.');
-          return;
-        }
-        setSignerInstance(signer);
-      }
-
-      // Check device count first
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter((d) => d.kind === 'videoinput');
-      if (videoDevices.length === 0) {
-        await triggerHandoverFlow();
-        return;
-      }
-
-      // Check for virtual cameras
-      const guardResult = await DeviceGuard.scanDevices();
-      if (guardResult.isVirtual) {
-        const errorMsg = `Virtual camera detected: "${guardResult.virtualCameraLabel}". Please connect a physical camera.`;
-        addLog(`Error: ${errorMsg}`);
-        alert(errorMsg);
-        return;
-      }
-
-      setIsScanning(true);
-      resetLiveness();
-      addLog(`Webcam active. Starting ${livenessLevel === 'off' ? 'manual capture' : 'anti-spoofing challenge'}...`);
-    } catch (err: any) {
-      if (
-        err.name === 'NotAllowedError' ||
-        err.name === 'PermissionDeniedError' ||
-        err.message?.includes('Permission denied')
-      ) {
-        await triggerHandoverFlow();
-      } else {
-        addLog(`Camera setup failed: ${err.message}`);
-      }
-    }
-  };
 
   const handlePopupSuccess = (result: any) => {
     if (!window.opener) {
@@ -507,6 +555,19 @@ export function OnboardingFlow() {
 
 
 
+
+  // Auto-switch to login when already registered error occurs, but do NOT clear the error so the support banner remains visible.
+  useEffect(() => {
+    if (sdkError && authMode === 'register') {
+      const errorStr = sdkError.toLowerCase();
+      if (errorStr.includes('user wallet already registered') || errorStr.includes('already registered')) {
+        setAutoSwitchMessage("You are already registered! Switched to Login mode.");
+        setAuthMode('login');
+        setIsScanning(false);
+        resetLiveness();
+      }
+    }
+  }, [sdkError, authMode, resetLiveness]);
 
   useEffect(() => {
     if (sdkError && isPopupFlow) {
@@ -1080,42 +1141,59 @@ export function OnboardingFlow() {
                    !emailAuthenticated ? (
                      <EmailLogin 
                        isProcessing={isGenerating}
+                       disabled={!formData.name || !formData.email}
                        onSuccess={() => {
                          setEmailAuthenticated(true);
+                         setAutoStartScanAfterEmail(true);
                        }}
                      />
                    ) : (
-                     <div className="bg-green-950/20 border border-green-900/40 rounded-2xl p-4 flex items-center gap-4">
-                       <div className="w-8 h-8 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-lg">✓</div>
-                       <div>
-                         <h4 className="text-xs font-bold uppercase tracking-wider text-green-400">Embedded Wallet Generated</h4>
-                         <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[250px]">
-                           {embeddedAddress}
-                         </p>
-                       </div>
-                     </div>
+                     <div className="bg-green-950/20 border border-green-900/40 rounded-2xl p-4 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-8 h-8 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-lg">✓</div>
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-green-400">Embedded Wallet Generated</h4>
+                            <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[250px]">
+                              {embeddedAddress}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            logout();
+                            setEmailAuthenticated(false);
+                            setAuthMode("register");
+                          }}
+                          className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 hover:text-white bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800 transition-colors"
+                        >
+                          Logout
+                        </button>
+                      </div>
                    )
                  )}
 
-                <button
-                  id="btn-register-scan"
-                  type="submit"
-                  disabled={isProcessing || !isModelLoaded}
-                  className={`w-full py-4 rounded-xl text-sm font-bold tracking-wider uppercase text-white bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-[0.99] transition-all flex items-center justify-center gap-3 shadow-lg glow-cyan ${(!isModelLoaded || isProcessing) && 'opacity-50 cursor-not-allowed'
-                    }`}
-                >
-                  {!isModelLoaded ? (
-                    <><div className="w-5 h-5 border-2 border-zinc-400 border-t-white rounded-full animate-spin" />Loading Neural Nets...</>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
-                      </svg>
-                      Scan Face &amp; Create Identity
-                    </>
-                  )}
-                </button>
+                {(authMethod === 'wallet' || emailAuthenticated) && (
+                  <button
+                    id="btn-register-scan"
+                    type="submit"
+                    disabled={isGenerating || isProcessing || !isModelLoaded || !formData.name || !formData.email || (authMethod === 'wallet' && !walletAddress) || (authMethod === 'email' && !embeddedWallet)}
+                    className={`w-full py-4 rounded-xl text-sm font-bold tracking-wider uppercase text-white bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-[0.99] transition-all flex items-center justify-center gap-3 shadow-lg glow-cyan ${(!isModelLoaded || isProcessing || !formData.name || !formData.email || (authMethod === 'wallet' && !walletAddress)) && 'opacity-50 cursor-not-allowed'
+                      }`}
+                  >
+                    {!isModelLoaded ? (
+                      <><div className="w-5 h-5 border-2 border-zinc-400 border-t-white rounded-full animate-spin" />Loading Neural Nets...</>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
+                        </svg>
+                        Scan Face &amp; Create Identity
+                      </>
+                    )}
+                  </button>
+                )}
               </form>
             )}
 
@@ -1231,39 +1309,55 @@ export function OnboardingFlow() {
                        isProcessing={isGenerating}
                        onSuccess={() => {
                          setEmailAuthenticated(true);
+                         setAutoStartScanAfterEmail(true);
                        }}
                      />
                    ) : (
-                     <div className="bg-green-950/20 border border-green-900/40 rounded-2xl p-4 flex items-center gap-4">
-                       <div className="w-8 h-8 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-lg">✓</div>
-                       <div>
-                         <h4 className="text-xs font-bold uppercase tracking-wider text-green-400">Embedded Wallet Generated</h4>
-                         <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[250px]">
-                           {embeddedAddress}
-                         </p>
-                       </div>
-                     </div>
+                     <div className="bg-green-950/20 border border-green-900/40 rounded-2xl p-4 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-8 h-8 rounded-full bg-green-500/20 text-green-400 flex items-center justify-center font-bold text-lg">✓</div>
+                          <div>
+                            <h4 className="text-xs font-bold uppercase tracking-wider text-green-400">Embedded Wallet Generated</h4>
+                            <p className="text-xs font-mono text-zinc-500 mt-0.5 truncate max-w-[250px]">
+                              {embeddedAddress}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            logout();
+                            setEmailAuthenticated(false);
+                            setAuthMode("register");
+                          }}
+                          className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 hover:text-white bg-zinc-900/50 px-3 py-1.5 rounded-lg border border-zinc-800 transition-colors"
+                        >
+                          Logout
+                        </button>
+                      </div>
                    )
                  )}
 
-                <button
-                  id="btn-login-scan"
-                  type="submit"
-                  disabled={isProcessing || !isModelLoaded}
-                  className={`w-full py-4 rounded-xl text-sm font-bold tracking-wider uppercase text-white bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-500 hover:to-teal-500 active:scale-[0.99] transition-all flex items-center justify-center gap-3 shadow-lg ${(!isModelLoaded || isProcessing) && 'opacity-50 cursor-not-allowed'
-                    }`}
-                >
-                  {!isModelLoaded ? (
-                    <><div className="w-5 h-5 border-2 border-zinc-400 border-t-white rounded-full animate-spin" />Loading Neural Nets...</>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
-                      </svg>
-                      Scan Face to Login
-                    </>
-                  )}
-                </button>
+                {(authMethod === 'wallet' || emailAuthenticated) && (
+                  <button
+                    id="btn-login-scan"
+                    type="submit"
+                    disabled={isGenerating || isProcessing || !isModelLoaded || (authMethod === 'wallet' && !walletAddress) || (authMethod === 'email' && !embeddedWallet)}
+                    className={`w-full py-4 rounded-xl text-sm font-bold tracking-wider uppercase text-white bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-500 hover:to-teal-500 active:scale-[0.99] transition-all flex items-center justify-center gap-3 shadow-lg ${(!isModelLoaded || isProcessing || (authMethod === 'wallet' && !walletAddress)) && 'opacity-50 cursor-not-allowed'
+                      }`}
+                  >
+                    {!isModelLoaded ? (
+                      <><div className="w-5 h-5 border-2 border-zinc-400 border-t-white rounded-full animate-spin" />Loading Neural Nets...</>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                        </svg>
+                        Scan Face to Login
+                      </>
+                    )}
+                  </button>
+                )}
               </form>
             )}
 
@@ -1507,7 +1601,7 @@ export function OnboardingFlow() {
                   </svg>
                   <div>
                     <h5 className="font-bold text-red-300">
-                      {sdkError.toLowerCase().includes('already exists') || sdkError.toLowerCase().includes('sybil')
+                      {sdkError.toLowerCase().includes('already exists') || sdkError.toLowerCase().includes('already registered') || sdkError.toLowerCase().includes('sybil')
                         ? '⚠ Identity Already Registered'
                         : sdkError.toLowerCase().includes('not found') || sdkError.toLowerCase().includes('register first')
                           ? '⚠ Identity Not Found'
@@ -1517,15 +1611,17 @@ export function OnboardingFlow() {
                   </div>
                 </div>
 
-                {(sdkError.toLowerCase().includes('already exists') || sdkError.toLowerCase().includes('sybil')) && (
+                {(sdkError.toLowerCase().includes('already exists') || sdkError.toLowerCase().includes('already registered') || sdkError.toLowerCase().includes('sybil')) && (
                   <div className="flex flex-col gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setAuthMode('login')}
-                      className="w-full py-2.5 bg-gradient-to-r from-green-700 to-teal-700 hover:from-green-600 hover:to-teal-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-                    >
-                      ⚡ Switch to Login Mode
-                    </button>
+                    {authMode !== 'login' && (
+                      <button
+                        type="button"
+                        onClick={() => setAuthMode('login')}
+                        className="w-full py-2.5 bg-gradient-to-r from-green-700 to-teal-700 hover:from-green-600 hover:to-teal-600 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+                      >
+                        ⚡ Switch to Login Mode
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setShowSupportDashboard(true)}

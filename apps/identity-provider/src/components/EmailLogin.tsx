@@ -3,9 +3,10 @@ import { useLogin } from '@privy-io/react-auth';
 interface EmailLoginProps {
   onSuccess: (email: string) => void;
   isProcessing: boolean;
+  disabled?: boolean;
 }
 
-export function EmailLogin({ onSuccess, isProcessing }: EmailLoginProps) {
+export function EmailLogin({ onSuccess, isProcessing, disabled }: EmailLoginProps) {
   const { login } = useLogin({
     onComplete: ({ user }) => {
       // Find the email in the linked accounts
@@ -36,7 +37,7 @@ export function EmailLogin({ onSuccess, isProcessing }: EmailLoginProps) {
 
       <button
         onClick={login}
-        disabled={isProcessing}
+        disabled={isProcessing || disabled}
         className="w-full py-3 rounded-xl text-xs font-bold uppercase tracking-wider text-white bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 active:scale-[0.99] transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50"
       >
         {isProcessing ? (

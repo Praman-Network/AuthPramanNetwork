@@ -8,7 +8,7 @@ export function useEmbeddedWallet() {
   const [embeddedAddress, setEmbeddedAddress] = useState<string | null>(null);
   
   const { wallets } = useWallets();
-  const { createWallet, authenticated } = usePrivy();
+  const { createWallet, authenticated, ready } = usePrivy();
 
   const generateWallet = useCallback(async () => {
     setIsGenerating(true);
@@ -48,16 +48,34 @@ export function useEmbeddedWallet() {
 
   // Auto-sync the wallet if Privy finishes loading it in the background or user authenticates
   useEffect(() => {
+    if (!ready) return; // Wait until Privy is fully initialized
+    
     const privyWallet = wallets.find(w => w.walletClientType === 'privy');
-    if ((privyWallet || authenticated) && !embeddedSigner && !isGenerating) {
+    
+    // Only auto-generate if they are authenticated AND don't have a wallet yet, or if the wallet exists
+    if (authenticated && (privyWallet || authenticated) && !embeddedSigner && !isGenerating) {
       generateWallet();
     }
-  }, [wallets, authenticated, embeddedSigner, isGenerating, generateWallet]);
+  }, [ready, wallets, authenticated, embeddedSigner, isGenerating, generateWallet]);
+
+  const clearWallet = useCallback(() => {
+    setEmbeddedSigner(null);
+    setEmbeddedAddress(null);
+    setIsGenerating(false);
+  }, []);
+
+  // Clear wallet automatically if unauthenticated
+  useEffect(() => {
+    if (ready && !authenticated) {
+      clearWallet();
+    }
+  }, [ready, authenticated, clearWallet]);
 
   return {
     generateWallet, // Still exposes for manual trigger if needed
     isGenerating,
     embeddedWallet: embeddedSigner,
-    embeddedAddress // Exposing synchronous address for UI
+    embeddedAddress, // Exposing synchronous address for UI
+    clearWallet
   };
 }

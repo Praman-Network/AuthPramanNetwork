@@ -48,8 +48,7 @@ export async function generateZKFaceProof(
   savedVector: number[],
   savedVectorHash: string
 ): Promise<{ proof: ZKProofObject; publicSignals: string[]; usedMock: boolean; is_mock: boolean }> {
-  // Simulate processing delay (mimicking client-side WASM compute time)
-  await new Promise((resolve) => setTimeout(resolve, 1500));
+  // (Removed simulated delay for better UX)
 
   if (!newVector || newVector.length !== 128 || !savedVector || savedVector.length !== 128) {
     throw new Error('Both new and saved vectors must be 128-dimensional quantized arrays.');

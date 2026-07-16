@@ -8,7 +8,9 @@ import { ethers } from 'ethers';
  */
 export function getStableVector(vector: number[] | Float32Array): number[] {
   const arr = Array.isArray(vector) ? vector : Array.from(vector);
-  return arr.map((val) => Math.round(val * 10) / 10);
+  // We use bucket size 0.2 (multiply by 5) to drastically increase stability, ensuring that slight 
+  // environmental variations in the same user's face don't produce a completely different hash.
+  return arr.map((val) => Math.round(val * 5) / 5);
 }
 
 /**
