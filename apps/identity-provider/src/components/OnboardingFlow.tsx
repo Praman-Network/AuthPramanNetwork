@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Webcam from 'react-webcam';
 import { usePramanIdentity } from "../hooks/usePramanIdentity";
-import { getPramanClient } from "@praman-network/sdk";
 import type { ProgressStep } from '../hooks/usePramanIdentity';
 import {
   DeviceGuard,
@@ -303,7 +302,6 @@ export function OnboardingFlow() {
       }
 
       // Check device count first
-      const address = await signer.getAddress();
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter((d) => d.kind === 'videoinput');
       if (videoDevices.length === 0) {
