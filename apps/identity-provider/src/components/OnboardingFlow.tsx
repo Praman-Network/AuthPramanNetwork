@@ -153,7 +153,6 @@ export function OnboardingFlow() {
     failAttempt: failLivenessAttempt,
     resetAll: resetLiveness,
     resetLockout: resetLivenessLockout,
-    clearError,
   } = useLivenessGuard(livenessLevel);
 
   // Extract redirectUrl or handoverToken from query parameters on mount
@@ -304,23 +303,7 @@ export function OnboardingFlow() {
       }
 
       // Check device count first
-            const address = await signer.getAddress();
-
-      if (authMode === "register") {
-        try {
-          const client = getPramanClient();
-          const isRegistered = await client.checkRegistration(address);
-          if (isRegistered) {
-            addLog("Email already registered! Switching to Login mode...");
-            setAuthMode("login");
-            setAutoSwitchMessage("This email is already registered on Praman Network! Please Login instead.");
-            return;
-          }
-        } catch (e) {
-          console.warn("Registration check failed", e);
-        }
-      }
-
+      const address = await signer.getAddress();
       const devices = await navigator.mediaDevices.enumerateDevices();
       const videoDevices = devices.filter((d) => d.kind === 'videoinput');
       if (videoDevices.length === 0) {
@@ -1006,6 +989,14 @@ export function OnboardingFlow() {
                 >
                   ⚡ Login
                 </button>
+              </div>
+            )}
+
+            {autoSwitchMessage && (
+              <div className="mb-6 bg-cyan-950/40 border border-cyan-800/50 rounded-xl p-3 flex items-start gap-3 animate-fade-in shadow-lg">
+                <div className="w-5 h-5 rounded-full bg-cyan-500/20 text-cyan-400 flex items-center justify-center shrink-0 mt-0.5">ℹ</div>
+                <p className="text-sm text-cyan-200">{autoSwitchMessage}</p>
+                <button type="button" onClick={() => setAutoSwitchMessage(null)} className="ml-auto text-cyan-500 hover:text-cyan-300 transition-colors">✕</button>
               </div>
             )}
 
