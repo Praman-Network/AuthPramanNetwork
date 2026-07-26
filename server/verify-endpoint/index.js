@@ -6,10 +6,20 @@ import * as snarkjs from 'snarkjs';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '.env') });      // Load local verify-endpoint/.env first
 dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Fallback to workspace root .env
+
+// ---------------------------------------------------------------------------
+// NEW: Supabase client (uses SERVICE ROLE key, not anon key, since this runs
+// on the backend/server and needs to read api_keys data securely).
+// ---------------------------------------------------------------------------
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // Load contract config
 const faceRegistryConfig = JSON.parse(
@@ -92,6 +102,56 @@ app.use(cors({
   credentials: true
 }));
 app.use(express.json());
+
+/**
+ * ---------------------------------------------------------------------------
+ * NEW: Real API Key + Origin Whitelist validation against Supabase.
+ *
+ * This replaces the old fake check (`apiKey.startsWith('pm_')`) which never
+ * actually confirmed the key was real, and never checked the dashboard's
+ * "Allowed Origins" whitelist at all.
+ *
+ * Behavior:
+ *  - Looks up the key in the `api_keys` table.
+ *  - If key doesn't exist or is inactive -> reject.
+ *  - If the app's allowed_origins list is EMPTY -> allow any origin
+ *    (matches the dashboard's own "unsecured" label/behavior).
+ *  - If allowed_origins has entries -> request's Origin header MUST match
+ *    one of them, or it gets rejected with 401.
+ * ---------------------------------------------------------------------------
+ */
+async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
+  if (!apiKey) {
+    return { valid: false, error: 'Missing API Key.' };
+  }
+
+  const { data: keyRecord, error } = await supabase
+    .from('api_keys')
+    .select('*')
+    .eq('key_value', apiKey)
+    .eq('is_active', true)
+    .single();
+
+  if (error || !keyRecord) {
+    return { valid: false, error: 'Invalid or inactive API Key.' };
+  }
+
+  const originWhitelist = keyRecord.allowed_origins || [];
+
+  // Empty whitelist = unsecured mode, matches dashboard's own messaging
+  if (originWhitelist.length === 0) {
+    return { valid: true };
+  }
+
+  if (!requestOrigin || !originWhitelist.includes(requestOrigin)) {
+    return {
+      valid: false,
+      error: `Origin '${requestOrigin || 'unknown'}' is not in the allowed whitelist for this API Key.`,
+    };
+  }
+
+  return { valid: true };
+}
 
 /**
  * Helper function to verify the wallet-signed JWT token sent by the client.
@@ -256,9 +316,11 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     const { apiKey, userAddress, faceDescriptorHash, quantizedVector, ciphertext, dataToEncryptHash, authSig } = req.body;
 
-    // 1. Validate Developer API Key
-    if (!apiKey || !apiKey.startsWith('pm_')) {
-      return res.status(401).json({ success: false, error: 'Invalid or missing API Key.' });
+    // 1. Validate Developer API Key + Origin Whitelist (NEW: real Supabase check)
+    const requestOrigin = req.headers.origin;
+    const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
+    if (!validation.valid) {
+      return res.status(401).json({ success: false, error: validation.error });
     }
 
     // 2. Validate inputs
@@ -333,9 +395,11 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { apiKey, userAddress, zkProof, publicSignals, is_mock } = req.body;
 
-    // 1. Validate Developer API Key
-    if (!apiKey || !apiKey.startsWith('pm_')) {
-      return res.status(401).json({ success: false, error: 'Invalid or missing API Key.' });
+    // 1. Validate Developer API Key + Origin Whitelist (NEW: real Supabase check)
+    const requestOrigin = req.headers.origin;
+    const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
+    if (!validation.valid) {
+      return res.status(401).json({ success: false, error: validation.error });
     }
 
     if (!userAddress || !zkProof || !publicSignals) {
@@ -450,4 +514,3 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`[PramanVerifyServer] Reference server running on port ${PORT}`);
 });
-
