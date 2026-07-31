@@ -36,6 +36,7 @@ export class PramanClient {
   private adminAddress: string;
   private livenessLevel: 'strict' | 'standard' | 'off';
   private idpUrl: string;
+  private requiredFactors?: ('wallet' | 'email' | 'face')[];
 
   constructor(config: PramanConfig) {
     this.apiKey = config.apiKey;
@@ -44,6 +45,7 @@ export class PramanClient {
     this.backendUrl = config.backendUrl || DEFAULT_RELAYER_URL;
     this.adminAddress = config.adminAddress || '0x499B85172C9a228eaE3D7723223DFF062bFdFd4D';
     this.idpUrl = config.idpUrl || 'https://auth.praman.network/authorize';
+    this.requiredFactors = config.requiredFactors;
 
     // Normalize liveness level config
     if (config.livenessLevel) {
@@ -579,6 +581,11 @@ export class PramanClient {
     
     if (options?.scopes && options.scopes.length > 0) {
       queryParams.append('scopes', options.scopes.join(','));
+    }
+
+    const effectiveFactors = options?.requiredFactors || this.requiredFactors;
+    if (effectiveFactors && effectiveFactors.length > 0) {
+      queryParams.append('requiredFactors', effectiveFactors.join(','));
     }
 
     const popupUrl = `${baseIdpUrl}?${queryParams.toString()}`;
