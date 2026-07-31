@@ -327,7 +327,9 @@ export class PramanClient {
 
       // 2. Fetch Registration details from contract (Free read-only RPC call, no MetaMask popup!)
       log('checking-duplicate', 'Querying registry contract for existing identity record...');
-      const readProvider = new ethers.JsonRpcProvider('https://rpc-amoy.polygon.technology');
+      const readProvider = new ethers.JsonRpcProvider(
+        process.env?.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy.drpc.org'
+      );
       const contract = new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, readProvider);
       
       const storedFaceHash = await contract.getUserFaceHash(userAddress);
