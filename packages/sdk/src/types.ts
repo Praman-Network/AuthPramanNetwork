@@ -1,3 +1,5 @@
+export type AuthFactor = 'wallet' | 'email' | 'face';
+
 export interface PramanConfig {
   apiKey: string;
   network: string;
@@ -7,6 +9,7 @@ export interface PramanConfig {
   liveness?: boolean | 'strict' | 'standard' | 'off';
   livenessLevel?: 'strict' | 'standard' | 'off';
   idpUrl?: string;
+  requiredFactors?: AuthFactor[];
 }
 
 export interface AuthResult {
@@ -31,6 +34,7 @@ export interface PopupOptions {
   scopes?: string[];
   width?: number;
   height?: number;
+  requiredFactors?: AuthFactor[];
 }
 
 export interface PopupAuthResult {
