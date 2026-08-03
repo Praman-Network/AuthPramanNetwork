@@ -11,9 +11,9 @@ import {
 
 // Initialize the PramanAuth SDK with Backend Relayer URL
 const praman = initPraman({
-  apiKey: "pm_dev_identity_provider",
+  apiKey: "pk_test_zbZ2swgTErGm4NgFDQ4iD65i",
   network: "polygon-amoy",
-  backendUrl: DEFAULT_RELAYER_URL, // Centralized Relayer Backend API
+  backendUrl: "http://localhost:4000", // Centralized Relayer Backend API
 });
 
 export type ProgressStep =
@@ -55,6 +55,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
   const [zkProof, setZkProof] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [isOriginAllowed, setIsOriginAllowed] = useState<boolean | null>(null);
 
   // Local logging helper with stable reference
   const addLog = useCallback((msg: string) => {
@@ -76,6 +77,15 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
       console.warn("Failed to load local ephemeral wallet:", e);
     }
   }, [addLog]);
+
+  useEffect(() => {
+    fetch(`http://localhost:4000/api/auth/check-origin?apiKey=pk_test_zbZ2swgTErGm4NgFDQ4iD65i`, {
+      credentials: 'include',
+    })
+      .then(res => res.json())
+      .then(data => setIsOriginAllowed(data.success))
+      .catch(() => setIsOriginAllowed(false));
+  }, []);
 
   // Connects the wallet using standard Ethers.js (if MetaMask is preferred)
   const connectWallet = useCallback(async () => {
@@ -353,5 +363,6 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     setIsScanning,
     testDecryption,
     addLog,
+    isOriginAllowed,
   };
 }

@@ -138,9 +138,12 @@ async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
 
   const originWhitelist = keyRecord.allowed_origins || [];
 
-  // Empty whitelist = unsecured mode, matches dashboard's own messaging
+  // No whitelist configured = block all requests (secure by default)
   if (originWhitelist.length === 0) {
-    return { valid: true };
+    return {
+      valid: false,
+      error: 'No allowed origins configured for this API Key. Add at least one origin in the dashboard before making requests.',
+    };
   }
 
   if (!requestOrigin || !originWhitelist.includes(requestOrigin)) {
@@ -164,7 +167,7 @@ function verifyPramanToken(token) {
     }
 
     const [headerB64, payloadB64, signature] = parts;
-    
+
     // Decode base64 URL-safe string
     const payloadString = Buffer.from(
       payloadB64.replace(/-/g, '+').replace(/_/g, '/'),
@@ -230,6 +233,16 @@ app.post('/verify', (req, res) => {
     name: result.payload.name || null,
     is_mock: result.payload.is_mock || false,
   });
+});
+
+app.get('/api/auth/check-origin', async (req, res) => {
+  const apiKey = req.query.apiKey;
+  const requestOrigin = req.headers.origin;
+  const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
+  if (!validation.valid) {
+    return res.status(403).json({ success: false, error: validation.error });
+  }
+  return res.json({ success: true });
 });
 
 // In-memory store for handover sessions
@@ -369,7 +382,7 @@ app.post('/api/auth/register', async (req, res) => {
       maxFeePerGas: ethers.parseUnits('35', 'gwei'),
       gasLimit: 300000
     });
-    
+
     console.log(`[Relayer] Sent transaction: ${tx.hash}. Waiting for block confirmation...`);
     const receipt = await tx.wait();
 
@@ -455,7 +468,7 @@ app.post('/api/auth/login', async (req, res) => {
           error: `ZK Proof public signals must contain 128 elements of reference vector, got ${publicSavedVector.length}`
         });
       }
-      
+
       const abiCoder = ethers.AbiCoder.defaultAbiCoder();
       const encoded = abiCoder.encode(['int256[128]'], [publicSavedVector]);
       const calculatedHash = ethers.keccak256(encoded);
@@ -492,7 +505,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/support', async (req, res) => {
   try {
     const { name, email, walletAddress, issueType, description } = req.body;
-    
+
     if (!name || !email || !description) {
       return res.status(400).json({ success: false, error: 'Name, email, and description are required.' });
     }
@@ -502,7 +515,7 @@ app.post('/api/support', async (req, res) => {
     console.log(`Type: ${issueType}`);
     console.log(`Wallet: ${walletAddress || 'N/A'}`);
     console.log(`Description: ${description}`);
-    
+
     return res.json({ success: true, message: 'Ticket received successfully.' });
   } catch (error) {
     console.error('[Relayer Error] Failed to process support ticket:', error);
