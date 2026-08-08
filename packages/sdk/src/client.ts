@@ -42,7 +42,8 @@ export class PramanClient {
     this.apiKey = config.apiKey;
     this.network = config.network;
     this.webhookUrl = config.webhookUrl;
-    this.backendUrl = config.backendUrl || DEFAULT_RELAYER_URL;
+    const url = config.backendUrl || DEFAULT_RELAYER_URL;
+    this.backendUrl = url.replace(/\/+$/, '');
     this.adminAddress = config.adminAddress || '0x499B85172C9a228eaE3D7723223DFF062bFdFd4D';
     this.idpUrl = config.idpUrl || 'https://auth.praman.network/authorize';
     this.requiredFactors = config.requiredFactors;
