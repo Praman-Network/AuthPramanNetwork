@@ -356,18 +356,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(404).json({ success: false, error: 'User is not registered.' });
     }
 
-    // 3. Environment check for Mock Proofs
-    const isProduction = process.env.NODE_ENV === 'production';
-    if (is_mock) {
-      if (isProduction) {
-        return res.status(400).json({
-          success: false,
-          error: 'Critical Security Error: Mock ZK proof is rejected in production mode.'
-        });
-      }
-      console.warn('[Relayer] Warning: Accepting mock ZK proof in development mode.');
-      return res.json({ success: true, verified: true, is_mock: true });
-    }
+    // 3. Removed mock bypass to enforce real ZK proofs.
 
     // 4. Verify Real ZK-SNARK Proof off-chain using SnarkJS
     if (!vKey) {

@@ -208,7 +208,7 @@ export class PramanClient {
       });
 
       const detection = await faceapiInstance
-        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.1 }))
         .withFaceLandmarks()
         .withFaceDescriptor();
 
@@ -313,7 +313,7 @@ export class PramanClient {
       });
 
       const detection = await faceapiInstance
-        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.1 }))
         .withFaceLandmarks()
         .withFaceDescriptor();
 
