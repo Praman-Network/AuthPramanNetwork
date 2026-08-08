@@ -1,6 +1,28 @@
 import { OnboardingFlow } from './components/OnboardingFlow';
+import { usePramanIdentity } from './hooks/usePramanIdentity';
 
 function App() {
+  const { isOriginAllowed } = usePramanIdentity();
+
+  if (isOriginAllowed === null) {
+    return (
+      <div className="flex-1 bg-[#0b0c10] min-h-screen flex items-center justify-center text-zinc-100">
+        <p className="text-zinc-500 text-sm">Verifying access...</p>
+      </div>
+    );
+  }
+  
+  if (isOriginAllowed === false) {
+    return (
+      <div className="flex-1 bg-[#0b0c10] min-h-screen flex items-center justify-center text-zinc-100">
+        <div className="text-center space-y-2 px-6">
+          <h1 className="text-xl font-bold text-red-500">Access Denied</h1>
+          <p className="text-zinc-400 text-sm">This origin is not authorized to use this API key.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 bg-[#0b0c10] min-h-screen flex flex-col justify-between text-zinc-100 selection:bg-cyan-600/30 relative">
       {/* Noise background overlay */}

@@ -55,6 +55,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
   const [zkProof, setZkProof] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [isOriginAllowed, setIsOriginAllowed] = useState<boolean | null>(null);
 
   // Local logging helper with stable reference
   const addLog = useCallback((msg: string) => {
@@ -76,6 +77,16 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
       console.warn("Failed to load local ephemeral wallet:", e);
     }
   }, [addLog]);
+
+  useEffect(() => {
+    const checkUrl = import.meta.env.VITE_BACKEND_URL || DEFAULT_RELAYER_URL;
+    fetch(`${checkUrl}/api/auth/check-origin?apiKey=${import.meta.env.VITE_PRAMAN_API_KEY}`, {
+      credentials: 'include',
+    })
+      .then(res => res.json())
+      .then(data => setIsOriginAllowed(data.success))
+      .catch(() => setIsOriginAllowed(false));
+  }, []);
 
   // Connects the wallet using standard Ethers.js (if MetaMask is preferred)
   const connectWallet = useCallback(async () => {
@@ -353,5 +364,6 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
     setIsScanning,
     testDecryption,
     addLog,
+    isOriginAllowed,
   };
 }

@@ -8,6 +8,7 @@
     "build": "echo 'No build step required'"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "ethers": "^6.17.0",

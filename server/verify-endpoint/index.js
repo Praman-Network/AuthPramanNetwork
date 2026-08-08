@@ -6,10 +6,61 @@ import * as snarkjs from 'snarkjs';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '.env') });      // Load local verify-endpoint/.env first
 dotenv.config({ path: path.resolve(__dirname, '../../.env') }); // Fallback to workspace root .env
+
+const supabase = createClient(
+  process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
+  process.env.SUPABASE_SERVICE_ROLE_KEY || 'placeholder'
+);
+
+async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
+  if (!apiKey) {
+    return { valid: false, error: 'Missing API Key.' };
+  }
+
+  // Always allow the official Identity Provider App to bypass the strict DB check
+  const firstPartyOrigins = ['https://auth.praman.network', 'http://localhost:5173', 'http://localhost:5174'];
+  const isOfficialKey = apiKey === 'pm_dev_identity_provider';
+  
+  if (isOfficialKey || (requestOrigin && firstPartyOrigins.includes(requestOrigin))) {
+    return { valid: true };
+  }
+
+  // For 3rd Party Integrators: Check Supabase DB
+  const { data: keyRecord, error } = await supabase
+    .from('api_keys')
+    .select('*')
+    .eq('key_value', apiKey)
+    .eq('is_active', true)
+    .single();
+
+  if (error || !keyRecord) {
+    return { valid: false, error: 'Invalid or inactive API Key.' };
+  }
+
+  const originWhitelist = keyRecord.allowed_origins || [];
+
+  // No whitelist configured = block all requests (secure by default)
+  if (originWhitelist.length === 0) {
+    return {
+      valid: false,
+      error: 'No allowed origins configured for this API Key. Add at least one origin in the dashboard before making requests.',
+    };
+  }
+
+  if (!requestOrigin || !originWhitelist.includes(requestOrigin)) {
+    return {
+      valid: false,
+      error: `Origin '${requestOrigin || 'unknown'}' is not in the allowed whitelist for this API Key.`,
+    };
+  }
+
+  return { valid: true };
+}
 
 // Load contract config
 const faceRegistryConfig = JSON.parse(
@@ -241,14 +292,26 @@ app.get('/api/handover/status/:sessionId', (req, res) => {
   });
 });
 
+app.get('/api/auth/check-origin', async (req, res) => {
+  const apiKey = req.query.apiKey;
+  const requestOrigin = req.headers.origin;
+  const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
+  if (!validation.valid) {
+    return res.status(403).json({ success: false, error: validation.error });
+  }
+  return res.json({ success: true });
+});
+
 // POST /api/auth/register
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { apiKey, userAddress, faceDescriptorHash, quantizedVector, ciphertext, dataToEncryptHash, authSig } = req.body;
 
-    // 1. Validate Developer API Key
-    if (!apiKey || !apiKey.startsWith('pm_')) {
-      return res.status(401).json({ success: false, error: 'Invalid or missing API Key.' });
+    // 1. Validate Developer API Key + Origin Whitelist
+    const requestOrigin = req.headers.origin;
+    const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
+    if (!validation.valid) {
+      return res.status(401).json({ success: false, error: validation.error });
     }
 
     // 2. Validate inputs
@@ -324,9 +387,11 @@ app.post('/api/auth/login', async (req, res) => {
   try {
     const { apiKey, userAddress, zkProof, publicSignals, is_mock } = req.body;
 
-    // 1. Validate Developer API Key
-    if (!apiKey || !apiKey.startsWith('pm_')) {
-      return res.status(401).json({ success: false, error: 'Invalid or missing API Key.' });
+    // 1. Validate Developer API Key + Origin Whitelist
+    const requestOrigin = req.headers.origin;
+    const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
+    if (!validation.valid) {
+      return res.status(401).json({ success: false, error: validation.error });
     }
 
     if (!userAddress || !zkProof || !publicSignals) {
