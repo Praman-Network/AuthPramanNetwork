@@ -11,9 +11,9 @@ import {
 
 // Initialize the PramanAuth SDK with Backend Relayer URL
 const praman = initPraman({
-  apiKey: "pk_test_zbZ2swgTErGm4NgFDQ4iD65i",
+  apiKey:  import.meta.env.VITE_PRAMAN_API_KEY, // Replace with your actual Praman API Key
   network: "polygon-amoy",
-  backendUrl: "http://localhost:4000", // Centralized Relayer Backend API
+  backendUrl: DEFAULT_RELAYER_URL, // Centralized Relayer Backend API
 });
 
 export type ProgressStep =
@@ -79,7 +79,7 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
   }, [addLog]);
 
   useEffect(() => {
-    fetch(`http://localhost:4000/api/auth/check-origin?apiKey=pk_test_zbZ2swgTErGm4NgFDQ4iD65i`, {
+    fetch(`${DEFAULT_RELAYER_URL}/api/auth/check-origin?apiKey=${import.meta.env.VITE_PRAMAN_API_KEY}`, {
       credentials: 'include',
     })
       .then(res => res.json())
