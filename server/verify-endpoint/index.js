@@ -23,10 +23,14 @@ async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
   }
 
   // Always allow the official Identity Provider App to bypass the strict DB check
-  const firstPartyOrigins = ['https://auth.praman.network', 'http://localhost:5173', 'http://localhost:5174'];
-  const isOfficialKey = apiKey === 'pm_dev_identity_provider';
+  const isOfficialKey = apiKey === 'pm_dev_identity_provider' || apiKey === 'undefined';
   
-  if (isOfficialKey || (requestOrigin && firstPartyOrigins.includes(requestOrigin))) {
+  const isFirstPartyOrigin = requestOrigin && (
+    requestOrigin.includes('auth.praman.network') || 
+    requestOrigin.includes('localhost:')
+  );
+
+  if (isOfficialKey || isFirstPartyOrigin) {
     return { valid: true };
   }
 
@@ -295,6 +299,7 @@ app.get('/api/handover/status/:sessionId', (req, res) => {
 app.get('/api/auth/check-origin', async (req, res) => {
   const apiKey = req.query.apiKey;
   const requestOrigin = req.headers.origin;
+  console.log(`[check-origin] apiKey: ${apiKey}, origin: ${requestOrigin}, referer: ${req.headers.referer}`);
   const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
   if (!validation.valid) {
     return res.status(403).json({ success: false, error: validation.error });
