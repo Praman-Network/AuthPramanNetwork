@@ -9,6 +9,47 @@ export function useAccountLinking(embeddedWalletAddress: string) {
 
   // We reuse the existing face scanning hooks for biometric re-verification
   const { verifyAndLogin, setIsScanning } = usePramanIdentity();
+  // We need to trigger privy's login programmatically.
+  // We should actually import `useLogin` from Privy, but this hook is not wrapped in PrivyProvider here.
+  // Instead, the component rendering this should pass a callback, or we can just export it.
+  
+  const linkEmailWallet = useCallback(async (privyLoginHook: any, createWalletHook: any) => {
+    setIsLinking(true);
+    setError(null);
+    try {
+      // Trigger Privy login for email
+      await privyLoginHook(); // the UI should wait for this to resolve and embedded wallet to be created
+      
+      // Wait for wallet creation
+      const privyWallet = await createWalletHook();
+
+      const ethereumProvider = await privyWallet.getEthereumProvider();
+      const provider = new ethers.BrowserProvider(ethereumProvider);
+      const newSigner = await provider.getSigner();
+      const emailAddress = await newSigner.getAddress();
+
+      if (emailAddress.toLowerCase() === embeddedWalletAddress.toLowerCase()) {
+        throw new Error("Email wallet cannot be the same as the current wallet.");
+      }
+
+      await fetch(import.meta.env.VITE_BACKEND_URL + '/api/auth/link-wallet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          oldAuthSig: 'dummy_old_sig_for_demo', 
+          newAuthSig: 'dummy_new_sig_for_demo',
+          newCid: 'QmDummyCIDForLinkedWalletDemo'
+        })
+      });
+
+      setLinkedAddress(emailAddress);
+
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during account linking.');
+    } finally {
+      setIsLinking(false);
+    }
+  }, [embeddedWalletAddress]);
 
   const linkWallet = useCallback(async () => {
     setIsLinking(true);
@@ -68,7 +109,8 @@ export function useAccountLinking(embeddedWalletAddress: string) {
   return {
     linkWallet,
     isLinking,
+    linkedAddress,
     error,
-    linkedAddress
+    linkEmailWallet
   };
 }

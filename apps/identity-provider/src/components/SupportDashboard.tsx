@@ -1,12 +1,30 @@
 import React, { useState } from 'react';
 
 export function SupportDashboard() {
+  const [email, setEmail] = useState('');
   const [subject, setSubject] = useState('Identity Recovery / Lost Wallet');
   const [message, setMessage] = useState('');
+  const [emailError, setEmailError] = useState('');
+
+  const validateEmail = (email: string) => {
+    return String(email)
+      .toLowerCase()
+      .match(
+        /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|.(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/
+      );
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const mailto = `mailto:support@praman.network?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
+    
+    if (!validateEmail(email)) {
+      setEmailError('Please enter a valid email address before submitting.');
+      return;
+    }
+    setEmailError('');
+
+    const bodyText = `User Email: ${email}\n\nMessage:\n${message}`;
+    const mailto = `mailto:networkpraman@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(bodyText)}`;
     window.location.href = mailto;
   };
 
@@ -26,6 +44,22 @@ export function SupportDashboard() {
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        <div>
+          <label className="block text-xs font-semibold text-zinc-400 mb-1">Your Email Address</label>
+          <input 
+            type="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (emailError) setEmailError('');
+            }}
+            placeholder="you@example.com"
+            className={`w-full bg-zinc-900 border ${emailError ? 'border-red-500' : 'border-zinc-800'} rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-cyan-500`}
+            required
+          />
+          {emailError && <p className="text-red-500 text-[10px] mt-1">{emailError}</p>}
+        </div>
+
         <div>
           <label className="block text-xs font-semibold text-zinc-400 mb-1">Issue Type</label>
           <select 
