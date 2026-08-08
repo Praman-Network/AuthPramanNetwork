@@ -1,5 +1,5 @@
 {
-  "address": "0x74D5DC985E4Fdda299084071B2E2e0323dE7B843",
+  "address": "0xd394734Ea51c6d8db058bE13B80a1fdF5b2C7bA1",
   "abi": [
     {
       "inputs": [],
@@ -177,6 +177,29 @@
         }
       ],
       "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "masterWallet",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "newWallet",
+          "type": "address"
+        },
+        {
+          "internalType": "string",
+          "name": "newCid",
+          "type": "string"
+        }
+      ],
+      "name": "linkWalletFor",
+      "outputs": [],
+      "stateMutability": "nonpayable",
       "type": "function"
     },
     {

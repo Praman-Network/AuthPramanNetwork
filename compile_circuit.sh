@@ -26,8 +26,9 @@ npx snarkjs zkey export verificationkey build/face_verify_final.zkey build/verif
 
 echo "Copying files to public directory..."
 # Copy compiled WASM and final zkey to public folder for browser-side snarkjs proof generation
-cp build/face_verify_js/face_verify.wasm public/zk/face_verify.wasm
-cp build/face_verify_final.zkey public/zk/face_verify.zkey
-cp build/verification_key.json public/zk/verification_key.json
+mkdir -p apps/identity-provider/public/zk/
+cp build/face_verify_js/face_verify.wasm apps/identity-provider/public/zk/face_verify.wasm
+cp build/face_verify_final.zkey apps/identity-provider/public/zk/face_verify.zkey
+cp build/verification_key.json apps/identity-provider/public/zk/verification_key.json
 
 echo "ZK circuit compilation and setup completed successfully!"

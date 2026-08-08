@@ -60,6 +60,8 @@ export function OnboardingFlow() {
 
   const [landmarker, setLandmarker] = useState<FaceLandmarker | null>(null);
 
+  const [requiredFactors, setRequiredFactors] = useState<string[]>(['wallet', 'face']);
+
   // Load MediaPipe FaceLandmarker once on mount
   useEffect(() => {
     let active = true;
@@ -112,6 +114,17 @@ export function OnboardingFlow() {
     }
   }, [ready, authenticated, emailAuthenticated]);
 
+  useEffect(() => {
+    if (requiredFactors.includes('email') && !requiredFactors.includes('wallet')) {
+      setAuthMethod('email');
+    } else if (requiredFactors.includes('wallet') && !requiredFactors.includes('email')) {
+      setAuthMethod('wallet');
+    }
+  }, [requiredFactors]);
+
+  const showWalletTab = requiredFactors.includes('wallet') || requiredFactors.length === 0 || (!requiredFactors.includes('wallet') && !requiredFactors.includes('email'));
+  const showEmailTab = requiredFactors.includes('email') || requiredFactors.length === 0 || (!requiredFactors.includes('wallet') && !requiredFactors.includes('email'));
+
   const [handoverSessionData, setHandoverSessionData] = useState<{
     sessionId: string;
     address: string;
@@ -145,6 +158,7 @@ export function OnboardingFlow() {
     },
   });
 
+
   // Hook for active spoofing detection (Liveness challenges)
   const {
     status: liveness,
@@ -162,6 +176,11 @@ export function OnboardingFlow() {
     const modeParam = params.get('mode') as 'login' | 'register' | null;
     const apiKeyParam = params.get('apiKey');
     const scopesParam = params.get('scopes');
+    const requiredFactorsParam = params.get('requiredFactors');
+
+    if (requiredFactorsParam) {
+      setRequiredFactors(requiredFactorsParam.split(','));
+    }
 
     // Check if it is a popup flow (has opener or query params indicating OAuth)
     const hasOpener = typeof window !== 'undefined' && !!window.opener;
@@ -1065,22 +1084,32 @@ export function OnboardingFlow() {
                 </div>
 
                  {/* Auth Method Toggle */}
-                 <div className="flex gap-4 mb-4 mt-4">
-                   <button
-                     type="button"
-                     onClick={() => setAuthMethod('wallet')}
-                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
-                   >
+                 {(showWalletTab && showEmailTab) ? (
+                   <div className="flex gap-4 mb-4 mt-4">
+                     <button
+                       type="button"
+                       onClick={() => setAuthMethod('wallet')}
+                       className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                     >
+                       Web3 Wallet
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => setAuthMethod('email')}
+                       className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                     >
+                       Email Magic Link
+                     </button>
+                   </div>
+                 ) : showWalletTab ? (
+                   <div className="mb-4 mt-4 w-full py-2 rounded-xl text-xs font-bold uppercase text-center bg-zinc-800 text-white">
                      Web3 Wallet
-                   </button>
-                   <button
-                     type="button"
-                     onClick={() => setAuthMethod('email')}
-                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
-                   >
+                   </div>
+                 ) : (
+                   <div className="mb-4 mt-4 w-full py-2 rounded-xl text-xs font-bold uppercase text-center bg-zinc-800 text-white">
                      Email Magic Link
-                   </button>
-                 </div>
+                   </div>
+                 )}
 
                  {/* Wallet Info Banner */}
                  {authMethod === 'wallet' ? (
@@ -1231,22 +1260,32 @@ export function OnboardingFlow() {
                 </div>
 
                  {/* Auth Method Toggle */}
-                 <div className="flex gap-4 mb-4 mt-4">
-                   <button
-                     type="button"
-                     onClick={() => setAuthMethod('wallet')}
-                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
-                   >
+                 {(showWalletTab && showEmailTab) ? (
+                   <div className="flex gap-4 mb-4 mt-4">
+                     <button
+                       type="button"
+                       onClick={() => setAuthMethod('wallet')}
+                       className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'wallet' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                     >
+                       Web3 Wallet
+                     </button>
+                     <button
+                       type="button"
+                       onClick={() => setAuthMethod('email')}
+                       className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
+                     >
+                       Email Magic Link
+                     </button>
+                   </div>
+                 ) : showWalletTab ? (
+                   <div className="mb-4 mt-4 w-full py-2 rounded-xl text-xs font-bold uppercase text-center bg-zinc-800 text-white">
                      Web3 Wallet
-                   </button>
-                   <button
-                     type="button"
-                     onClick={() => setAuthMethod('email')}
-                     className={`flex-1 py-2 rounded-xl text-xs font-bold uppercase transition-all ${authMethod === 'email' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-400'}`}
-                   >
+                   </div>
+                 ) : (
+                   <div className="mb-4 mt-4 w-full py-2 rounded-xl text-xs font-bold uppercase text-center bg-zinc-800 text-white">
                      Email Magic Link
-                   </button>
-                 </div>
+                   </div>
+                 )}
 
                  {/* Wallet Banner */}
                  {authMethod === 'wallet' ? (

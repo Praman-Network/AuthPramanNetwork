@@ -116,4 +116,26 @@ contract FaceRegistry {
 
         emit FaceRegistered(msg.sender, hash, cid);
     }
+
+    /**
+     * @dev Links a new wallet address to an existing face identity.
+     * Can only be called by the contract owner (the Backend Relayer).
+     */
+    function linkWalletFor(address masterWallet, address newWallet, string memory newCid) public onlyOwner {
+        bytes32 faceHash = addressToFace[masterWallet];
+        require(faceHash != bytes32(0), "Master wallet not registered");
+        require(faceToMasterWallet[faceHash] != address(0), "Face not registered");
+        require(addressToFace[newWallet] == bytes32(0), "New wallet already registered to a face");
+
+        // Link the new wallet to the existing face hash
+        addressToFace[newWallet] = faceHash;
+        
+        // Update the CID to the new re-encrypted payload that grants both wallets access
+        _faceCids[faceHash] = newCid;
+
+        // Legacy mappings
+        _userFaceHashes[newWallet] = faceHash;
+
+        emit FaceRegistered(newWallet, faceHash, newCid);
+    }
 }

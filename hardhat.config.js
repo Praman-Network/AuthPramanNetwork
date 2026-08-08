@@ -23,7 +23,7 @@ export default {
     },
     amoy: {
       type: "http",
-      url: "https://rpc-amoy.polygon.technology",
+      url: process.env.POLYGON_AMOY_RPC || process.env.VITE_POLYGON_AMOY_RPC || "https://polygon-amoy.drpc.org",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
     }
   }

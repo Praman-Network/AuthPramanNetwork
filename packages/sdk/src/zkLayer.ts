@@ -22,8 +22,8 @@ function computeFaceSimilarity(a: number[], b: number[]): number {
     sumSq += diff * diff;
   }
   const distance = Math.sqrt(sumSq);
-  // face-api.js quantized distance: same person <= 60000 (0.6 float), different person > 60000
-  const MATCH_THRESHOLD = 60000; // Correct threshold matching the 3,600,000,000 squared limit of ZK circuit
+  // face-api.js quantized distance: same person <= 100000, different person > 100000
+  const MATCH_THRESHOLD = 100000; // Correct threshold matching the 10000000000 squared limit of ZK circuit
   if (distance > MATCH_THRESHOLD) {
     throw new Error(
       `Face biometric mismatch. Euclidean distance ${Math.round(distance)} exceeds threshold ${MATCH_THRESHOLD}. ` +
@@ -59,8 +59,9 @@ export async function generateZKFaceProof(
   const similarityScore = computeFaceSimilarity(newVector, savedVector);
   console.log(`[ZK] Face similarity score: ${(similarityScore * 100).toFixed(1)}%`);
 
-  const wasmPath = '/zk/face_verify.wasm';
-  const zkeyPath = '/zk/face_verify.zkey';
+  const cacheBuster = Date.now();
+  const wasmPath = `/zk/face_verify.wasm?v=${cacheBuster}`;
+  const zkeyPath = `/zk/face_verify.zkey?v=${cacheBuster}`;
 
   try {
     console.log('Attempting real client-side ZK proof generation using SnarkJS...');
@@ -99,70 +100,9 @@ export async function generateZKFaceProof(
       is_mock: false,
     };
   } catch (error: any) {
-    // If this is a face-mismatch error, re-throw it — do NOT fall back to mock
-    if (
-      error?.message?.includes('mismatch') ||
-      error?.message?.includes('Login denied') ||
-      error?.message?.includes('verification failed')
-    ) {
-      throw error;
-    }
-
-    // Environment-Aware Security Guard
-    const isProduction = typeof import.meta !== 'undefined' && (import.meta as any).env?.MODE === 'production';
-    if (isProduction) {
-      throw new Error(
-        `Critical Security Error: Real ZK proof generation failed in production mode. ` +
-        `Mock proof generation is disabled. Details: ${error?.message || error}`
-      );
-    }
-
-    // ZK circuit files missing — fall back to simulation proof
-    // Face similarity was already verified above, so this is safe
-    console.warn('⚠️ SECURITY WARNING: Using mock ZK-Proof in development mode.');
-
-    const matchSignal = '1'; // We already passed computeFaceSimilarity above
-    const publicSignals = [
-      matchSignal,
-      `0x${Math.floor(similarityScore * 1e10).toString(16).padStart(64, '0')}`,
-      savedVectorHash,
-      '3600000000',
-    ];
-
-    const mockProof: ZKProofObject = {
-      pi_a: [
-        '0x1ad34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1',
-        '0x2bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d2',
-        '0x0000000000000000000000000000000000000000000000000000000000000001',
-      ],
-      pi_b: [
-        [
-          '0x3bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d3',
-          '0x4bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d4',
-        ],
-        [
-          '0x5bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d5',
-          '0x6bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d6',
-        ],
-        [
-          '0x0000000000000000000000000000000000000000000000000000000000000001',
-          '0x0000000000000000000000000000000000000000000000000000000000000002',
-        ],
-      ],
-      pi_c: [
-        '0x7bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d7',
-        '0x8bd34b2f4c9a8d76e4f3a2b1c0e9d8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d8',
-        '0x0000000000000000000000000000000000000000000000000000000000000001',
-      ],
-      protocol: 'groth16',
-      publicSignals,
-    };
-
-    return {
-      proof: mockProof,
-      publicSignals,
-      usedMock: true,
-      is_mock: true,
-    };
+    // Real ZK proof generation failed. Do not fall back to mock.
+    throw new Error(
+      `Critical Security Error: Real ZK proof generation failed. Details: ${error?.message || error}`
+    );
   }
 }

@@ -36,14 +36,17 @@ export class PramanClient {
   private adminAddress: string;
   private livenessLevel: 'strict' | 'standard' | 'off';
   private idpUrl: string;
+  private requiredFactors?: ('wallet' | 'email' | 'face')[];
 
   constructor(config: PramanConfig) {
     this.apiKey = config.apiKey;
     this.network = config.network;
     this.webhookUrl = config.webhookUrl;
-    this.backendUrl = config.backendUrl || DEFAULT_RELAYER_URL;
+    const url = config.backendUrl || DEFAULT_RELAYER_URL;
+    this.backendUrl = url.replace(/\/+$/, '');
     this.adminAddress = config.adminAddress || '0x499B85172C9a228eaE3D7723223DFF062bFdFd4D';
     this.idpUrl = config.idpUrl || 'https://auth.praman.network/authorize';
+    this.requiredFactors = config.requiredFactors;
 
     // Normalize liveness level config
     if (config.livenessLevel) {
@@ -206,7 +209,7 @@ export class PramanClient {
       });
 
       const detection = await faceapiInstance
-        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.1 }))
         .withFaceLandmarks()
         .withFaceDescriptor();
 
@@ -311,7 +314,7 @@ export class PramanClient {
       });
 
       const detection = await faceapiInstance
-        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        .detectSingleFace(img, new faceapiInstance.SsdMobilenetv1Options({ minConfidence: 0.1 }))
         .withFaceLandmarks()
         .withFaceDescriptor();
 
@@ -327,7 +330,9 @@ export class PramanClient {
 
       // 2. Fetch Registration details from contract (Free read-only RPC call, no MetaMask popup!)
       log('checking-duplicate', 'Querying registry contract for existing identity record...');
-      const readProvider = new ethers.JsonRpcProvider('https://rpc-amoy.polygon.technology');
+      const readProvider = new ethers.JsonRpcProvider(
+        process.env?.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy.drpc.org'
+      );
       const contract = new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, readProvider);
       
       const storedFaceHash = await contract.getUserFaceHash(userAddress);
@@ -549,6 +554,44 @@ export class PramanClient {
   }
 
   /**
+   * Links a new wallet (e.g. Email Embedded Wallet) to an already authenticated Master Wallet (e.g. MetaMask).
+   */
+  public async linkAccount(
+    masterSigner: any,
+    newSigner: any,
+    newCid: string, // In a production app, the PII would be re-encrypted for both wallets here to generate a new CID
+    faceHash: string
+  ): Promise<any> {
+    const masterAddress = await masterSigner.getAddress();
+    const newAddress = await newSigner.getAddress();
+
+    console.log(`[PramanSDK] Initiating account link: ${newAddress} -> ${masterAddress}`);
+
+    // Generate signatures from both wallets
+    const oldAuthSig = await this.generateWalletSignedToken(masterSigner, masterAddress, faceHash, newCid);
+    const newAuthSig = await this.generateWalletSignedToken(newSigner, newAddress, faceHash, newCid);
+
+    const response = await fetch(`${this.backendUrl}/api/auth/link-wallet`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        oldAuthSig,
+        newAuthSig,
+        newCid
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to link wallet: ${errorText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
    * Internal helper to open the popup and handle window messaging.
    */
   private launchPopupFlow(mode: 'login' | 'register', options?: PopupOptions): Promise<PopupAuthResult> {
@@ -577,6 +620,11 @@ export class PramanClient {
     
     if (options?.scopes && options.scopes.length > 0) {
       queryParams.append('scopes', options.scopes.join(','));
+    }
+
+    const effectiveFactors = options?.requiredFactors || this.requiredFactors;
+    if (effectiveFactors && effectiveFactors.length > 0) {
+      queryParams.append('requiredFactors', effectiveFactors.join(','));
     }
 
     const popupUrl = `${baseIdpUrl}?${queryParams.toString()}`;

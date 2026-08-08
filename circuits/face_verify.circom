@@ -38,4 +38,4 @@ template FaceDistanceVerify(n, threshold) {
     isMatch === 1; // Constraint: must be a match (isMatch == 1)
 }
 
-component main {public [savedVector]} = FaceDistanceVerify(128, 3600000000);
+component main {public [savedVector]} = FaceDistanceVerify(128, 10000000000);

@@ -42,12 +42,15 @@ try {
   }
 }
 
-const provider = new ethers.JsonRpcProvider("https://rpc-amoy.polygon.technology");
+const provider = new ethers.JsonRpcProvider(
+  process.env.POLYGON_AMOY_RPC || process.env.VITE_POLYGON_AMOY_RPC || 'https://polygon-amoy.drpc.org'
+);
 const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY || process.env.PRIVATE_KEY;
-if (!relayerPrivateKey) {
-  console.warn("[PramanVerifyServer] Warning: RELAYER_PRIVATE_KEY and PRIVATE_KEY environment variables are missing. Relayer transactions will fail.");
+const isPlaceholderKey = relayerPrivateKey === '0x_insert_your_private_key_here' || relayerPrivateKey === '0x';
+if (!relayerPrivateKey || isPlaceholderKey) {
+  console.warn("[PramanVerifyServer] Warning: RELAYER_PRIVATE_KEY/PRIVATE_KEY is missing or still placeholder. Relayer transactions will fail until a real key is provided.");
 }
-const relayerWallet = relayerPrivateKey ? new ethers.Wallet(relayerPrivateKey, provider) : null;
+const relayerWallet = relayerPrivateKey && !isPlaceholderKey ? new ethers.Wallet(relayerPrivateKey, provider) : null;
 const contract = relayerWallet ? new ethers.Contract(faceRegistryConfig.address, faceRegistryConfig.abi, relayerWallet) : null;
 
 // Pinata Upload helper
@@ -377,10 +380,11 @@ app.post('/api/auth/register', async (req, res) => {
 
     // 6. Broadcast Gas-sponsored contract transaction
     console.log(`[Relayer] Registering face hash ${faceDescriptorHash} for user ${userAddress} gaslessly...`);
+    const feeData = await provider.getFeeData();
     const tx = await contract.registerFaceFor(userAddress, faceDescriptorHash, ipfsResult.cid, {
-      maxPriorityFeePerGas: ethers.parseUnits('30', 'gwei'),
-      maxFeePerGas: ethers.parseUnits('35', 'gwei'),
-      gasLimit: 300000
+      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? ethers.parseUnits('1', 'gwei'),
+      maxFeePerGas: (feeData.maxFeePerGas ?? ethers.parseUnits('3', 'gwei')) + ethers.parseUnits('1', 'gwei'),
+      gasLimit: 500000
     });
 
     console.log(`[Relayer] Sent transaction: ${tx.hash}. Waiting for block confirmation...`);
@@ -429,18 +433,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(404).json({ success: false, error: 'User is not registered.' });
     }
 
-    // 3. Environment check for Mock Proofs
-    const isProduction = process.env.NODE_ENV === 'production';
-    if (is_mock) {
-      if (isProduction) {
-        return res.status(400).json({
-          success: false,
-          error: 'Critical Security Error: Mock ZK proof is rejected in production mode.'
-        });
-      }
-      console.warn('[Relayer] Warning: Accepting mock ZK proof in development mode.');
-      return res.json({ success: true, verified: true, is_mock: true });
-    }
+    // 3. Removed mock bypass to enforce real ZK proofs.
 
     // 4. Verify Real ZK-SNARK Proof off-chain using SnarkJS
     if (!vKey) {
