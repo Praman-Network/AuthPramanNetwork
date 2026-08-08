@@ -553,6 +553,44 @@ export class PramanClient {
   }
 
   /**
+   * Links a new wallet (e.g. Email Embedded Wallet) to an already authenticated Master Wallet (e.g. MetaMask).
+   */
+  public async linkAccount(
+    masterSigner: any,
+    newSigner: any,
+    newCid: string, // In a production app, the PII would be re-encrypted for both wallets here to generate a new CID
+    faceHash: string
+  ): Promise<any> {
+    const masterAddress = await masterSigner.getAddress();
+    const newAddress = await newSigner.getAddress();
+
+    console.log(`[PramanSDK] Initiating account link: ${newAddress} -> ${masterAddress}`);
+
+    // Generate signatures from both wallets
+    const oldAuthSig = await this.generateWalletSignedToken(masterSigner, masterAddress, faceHash, newCid);
+    const newAuthSig = await this.generateWalletSignedToken(newSigner, newAddress, faceHash, newCid);
+
+    const response = await fetch(`${this.backendUrl}/api/auth/link-wallet`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        oldAuthSig,
+        newAuthSig,
+        newCid
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to link wallet: ${errorText}`);
+    }
+
+    return response.json();
+  }
+
+  /**
    * Internal helper to open the popup and handle window messaging.
    */
   private launchPopupFlow(mode: 'login' | 'register', options?: PopupOptions): Promise<PopupAuthResult> {

@@ -440,7 +440,50 @@ app.post('/api/support', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`[PramanVerifyServer] Reference server running on port ${PORT}`);
+app.post('/api/auth/link-wallet', async (req, res) => {
+  const { oldAuthSig, newAuthSig, newCid } = req.body;
+
+  if (!oldAuthSig || !newAuthSig || !newCid) {
+    return res.status(400).json({ success: false, error: 'Missing required parameters.' });
+  }
+
+  // Verify ownership of the old (master) wallet
+  const oldVerification = verifyPramanToken(oldAuthSig);
+  if (!oldVerification.valid) {
+    return res.status(401).json({ success: false, error: `Invalid old wallet signature: ${oldVerification.error}` });
+  }
+  const masterWallet = oldVerification.address;
+
+  // Verify ownership of the new wallet
+  const newVerification = verifyPramanToken(newAuthSig);
+  if (!newVerification.valid) {
+    return res.status(401).json({ success: false, error: `Invalid new wallet signature: ${newVerification.error}` });
+  }
+  const newWallet = newVerification.address;
+
+  try {
+    if (!contract) {
+      throw new Error("Smart contract not configured on relayer.");
+    }
+    
+    // Check if new wallet is already registered
+    const existingFaceHashForNewWallet = await contract.getUserFaceHash(newWallet);
+    if (existingFaceHashForNewWallet !== ethers.ZeroHash) {
+       return res.status(400).json({ success: false, error: "New wallet is already registered to a face identity." });
+    }
+
+    // Call the contract to link the wallet
+    const tx = await contract.linkWalletFor(masterWallet, newWallet, newCid);
+    console.log(`[Relayer] Linking wallet ${newWallet} to ${masterWallet}. Tx: ${tx.hash}`);
+    await tx.wait();
+    
+    return res.json({ success: true, txHash: tx.hash });
+  } catch (error) {
+    console.error("[Relayer] Error linking wallet:", error);
+    return res.status(500).json({ success: false, error: 'Failed to execute linking transaction on-chain.' });
+  }
 });
 
+app.listen(4000, () => {
+  console.log(`[PramanVerifyServer] Reference server running on port 4000`);
+});

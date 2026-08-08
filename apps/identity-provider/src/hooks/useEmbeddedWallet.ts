@@ -13,24 +13,30 @@ export function useEmbeddedWallet() {
   const generateWallet = useCallback(async () => {
     setIsGenerating(true);
     try {
-      let privyWallet: any = wallets.find(w => w.walletClientType === 'privy');
+      // First try to find a Privy embedded wallet
+      let targetWallet: any = wallets.find(w => w.walletClientType === 'privy');
       
+      // If no embedded wallet, just use the first connected wallet (e.g. MetaMask)
+      if (!targetWallet && wallets.length > 0) {
+         targetWallet = wallets[0];
+      }
+
       // If it's not generated automatically by Privy (e.g. no createOnLogin), create it explicitly
-      if (!privyWallet) {
-        privyWallet = (await createWallet()) as any;
+      if (!targetWallet) {
+        targetWallet = (await createWallet()) as any;
       }
 
-      if (!privyWallet) {
-        throw new Error("Privy embedded wallet could not be created.");
+      if (!targetWallet) {
+        throw new Error("No wallet could be retrieved or created.");
       }
 
-      // Extract EIP-1193 provider from Privy's embedded wallet
-      const ethereumProvider = await privyWallet.getEthereumProvider();
+      // Extract EIP-1193 provider from the wallet
+      const ethereumProvider = await targetWallet.getEthereumProvider();
       
       // Wrap it in Ethers v6 BrowserProvider
       const provider = new ethers.BrowserProvider(ethereumProvider);
       
-      // Get the Signer which corresponds to the user's embedded wallet
+      // Get the Signer which corresponds to the user's wallet
       const signer = await provider.getSigner();
       const address = await signer.getAddress();
       
@@ -39,24 +45,22 @@ export function useEmbeddedWallet() {
       
       return signer;
     } catch (error) {
-      console.error("Failed to retrieve embedded wallet:", error);
+      console.error("Failed to retrieve wallet:", error);
       return null;
     } finally {
       setIsGenerating(false);
     }
-  }, [wallets]);
+  }, [wallets, createWallet]);
 
   // Auto-sync the wallet if Privy finishes loading it in the background or user authenticates
   useEffect(() => {
     if (!ready) return; // Wait until Privy is fully initialized
     
-    const privyWallet = wallets.find(w => w.walletClientType === 'privy');
-    
-    // Only auto-generate if they are authenticated AND don't have a wallet yet, or if the wallet exists
-    if (authenticated && (privyWallet || authenticated) && !embeddedSigner && !isGenerating) {
+    // Only auto-generate if they are authenticated AND don't have a signer yet
+    if (authenticated && !embeddedSigner && !isGenerating) {
       generateWallet();
     }
-  }, [ready, wallets, authenticated, embeddedSigner, isGenerating, generateWallet]);
+  }, [ready, authenticated, embeddedSigner, isGenerating, generateWallet]);
 
   const clearWallet = useCallback(() => {
     setEmbeddedSigner(null);
