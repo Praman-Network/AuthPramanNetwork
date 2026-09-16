@@ -48,7 +48,6 @@ async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
 
   const originWhitelist = keyRecord.allowed_origins || [];
 
-  // No whitelist configured = block all requests (secure by default)
   if (originWhitelist.length === 0) {
     return {
       valid: false,
@@ -56,7 +55,11 @@ async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
     };
   }
 
-  if (!requestOrigin || !originWhitelist.includes(requestOrigin)) {
+  // Normalize URLs by removing trailing slashes for robust matching
+  const normalizedRequestOrigin = requestOrigin ? requestOrigin.replace(/\/$/, '') : '';
+  const normalizedWhitelist = originWhitelist.map(o => o.replace(/\/$/, ''));
+
+  if (!normalizedRequestOrigin || !normalizedWhitelist.includes(normalizedRequestOrigin)) {
     return {
       valid: false,
       error: `Origin '${requestOrigin || 'unknown'}' is not in the allowed whitelist for this API Key.`,
@@ -298,7 +301,7 @@ app.get('/api/handover/status/:sessionId', (req, res) => {
 
 app.get('/api/auth/check-origin', async (req, res) => {
   const apiKey = req.query.apiKey;
-  const requestOrigin = req.headers.origin;
+  const requestOrigin = req.query.clientOrigin || req.headers.origin;
   console.log(`[check-origin] apiKey: ${apiKey}, origin: ${requestOrigin}, referer: ${req.headers.referer}`);
   const validation = await validateApiKeyAndOrigin(apiKey, requestOrigin);
   if (!validation.valid) {
