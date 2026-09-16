@@ -60,7 +60,7 @@ export function OnboardingFlow() {
 
   const [landmarker, setLandmarker] = useState<FaceLandmarker | null>(null);
 
-  const [requiredFactors, setRequiredFactors] = useState<string[]>(['wallet', 'face']);
+  const [requiredFactors, setRequiredFactors] = useState<string[]>(['wallet', 'email', 'face']);
 
   // Load MediaPipe FaceLandmarker once on mount
   useEffect(() => {
