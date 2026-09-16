@@ -79,8 +79,10 @@ export function usePramanIdentity(config?: PramanIdentityConfig) {
   }, [addLog]);
 
   useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const apiKey = urlParams.get('apiKey') || import.meta.env.VITE_PRAMAN_API_KEY;
     const checkUrl = import.meta.env.VITE_BACKEND_URL || DEFAULT_RELAYER_URL;
-    fetch(`${checkUrl}/api/auth/check-origin?apiKey=${import.meta.env.VITE_PRAMAN_API_KEY}`, {
+    fetch(`${checkUrl}/api/auth/check-origin?apiKey=${apiKey}`, {
       credentials: 'include',
     })
       .then(res => res.json())
