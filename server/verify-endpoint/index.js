@@ -25,9 +25,9 @@ async function validateApiKeyAndOrigin(apiKey, requestOrigin) {
   // Always allow the official Identity Provider App to bypass the strict DB check
   const isOfficialKey = apiKey === 'pm_dev_identity_provider' || apiKey === 'undefined';
   
+  // NOTE: Removed 'localhost:' bypass here so local testing strictly enforces DB whitelist
   const isFirstPartyOrigin = requestOrigin && (
-    requestOrigin.includes('auth.praman.network') || 
-    requestOrigin.includes('localhost:')
+    requestOrigin.includes('auth.praman.network')
   );
 
   if (isOfficialKey || isFirstPartyOrigin) {
